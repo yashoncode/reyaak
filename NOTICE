@@ -1,0 +1,74 @@
+Reyaak
+Copyright (c) 2026 Reyaak contributors
+
+Reyaak is an independent implementation in Kotlin. It is not a fork, a port, or
+a rename of any project listed below, and no source code from them appears in
+this repository. Their designs informed this one, and the debts are recorded
+here because attribution is owed for ideas even where it is not owed for code.
+
+--------------------------------------------------------------------------------
+freellmapi — https://github.com/tashfeenahmed/freellmapi
+MIT License, Copyright (c) 2026 Tashfeen Ahmed
+
+Reyaak's router is a native Kotlin reimplementation guided by this project's
+design. Specifically informed by it:
+  - the bandit routing score: signals normalized to [0,1] and combined as a
+    convex combination, multiplied by always-on headroom and rate-limit
+    guardrails, rather than a sum of hand-tuned bonuses;
+  - Beta-posterior reliability with Thompson sampling, so exploration is
+    proportional to uncertainty;
+  - the saturating throughput curve and TTFB ramp forming a single speed axis,
+    and the decision to charge timeouts against that axis;
+  - tier-dominant intelligence scoring with square-root-compressed rank;
+  - the upstream error taxonomy: which HTTP statuses are fail-over-able versus
+    fatal, and why 403 and 413 belong in the former;
+  - three-tier Retry-After resolution (header, then a walk of the error body for
+    google.rpc.RetryInfo-shaped fields, then an anchored prose match), clamped;
+  - the single-generic-adapter-plus-outliers structure for OpenAI-compatible
+    providers.
+
+--------------------------------------------------------------------------------
+Hermes Agent — https://github.com/NousResearch/hermes-agent
+MIT License, Copyright (c) 2025 Nous Research
+
+Reyaak's agent core is informed by this project's design. Specifically:
+  - the separation of Memory (facts) from Skills (procedures);
+  - the skill document model: frontmatter metadata plus a procedural body, with
+    runtime state for version, lifecycle, pinning, and usage count;
+  - skill authoring by prompting the live agent with authoring standards rather
+    than building a separate distillation engine;
+  - the curator's safety invariants, adopted verbatim as requirements: touch
+    only agent-created skills, never auto-delete (archive, recoverably), let
+    pinned items bypass all automatic transitions, and keep the expensive
+    model-driven pass opt-in behind a cheap deterministic one;
+  - inactivity-triggered maintenance in place of a scheduling daemon;
+  - classifying tools by side-effect capability, with unknown and external
+    tools treated as effect-capable by default.
+
+--------------------------------------------------------------------------------
+Hermes Mobile — https://github.com/sesaloy/hermes-mobile
+MIT License, Copyright (c) 2025 Nous Research; (c) 2026 Hermes Mobile contributors
+
+Consulted for Android packaging and runtime-permission practice. Reyaak shares
+no code with it and takes a different approach (native Kotlin rather than a
+WebView wrapper around a bundled runtime). Reyaak does not include the ADB host
+binary that project bundles, nor anything derived from LADB.
+
+--------------------------------------------------------------------------------
+Hermes-Mobile — https://github.com/plcunha/Hermes-Mobile
+MIT License, Copyright (c) 2025 Nous Research; (c) 2025-2026 Hermes Mobile Contributors
+
+Consulted for its notes on mobile execution constraints (battery, background
+limits, storage).
+
+--------------------------------------------------------------------------------
+hermes — https://github.com/Mohamedhasbini/hermes
+MIT License, Copyright (c) 2026 Mohamad
+
+Reviewed; no material influence on this design.
+
+--------------------------------------------------------------------------------
+https://github.com/sinonchum/hermes-mobile
+
+This repository carries NO license file and is therefore all rights reserved.
+Nothing was copied from it, and it did not inform this design.

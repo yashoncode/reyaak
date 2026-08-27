@@ -1,0 +1,33 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Android
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+captures/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+.kotlin/
+
+# Secrets — Reyaak provider keys live in the Android Keystore, never on disk.
+# This is a belt-and-braces guard against a stray keys file being committed.
+**/keys.properties
+keystore.properties
+**/secrets.properties
+*.jks
+*.keystore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build logs from local iteration
+build-*.log

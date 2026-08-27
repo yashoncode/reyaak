@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Reyaak</string>
+    <string name="tagline">Autonomous agent runtime</string>
+
+    <string name="channel_agent">Agent runtime</string>
+    <string name="channel_agent_desc">Shows what Reyaak is working on.</string>
+
+    <string name="action_start">Start agent</string>
+    <string name="action_stop">Stop agent</string>
+    <string name="action_open_settings">Open notification settings</string>
+    <string name="action_allow">Allow</string>
+
+    <string name="state_running">Running</string>
+    <string name="state_stopped">Stopped</string>
+
+    <string name="label_activity">Activity</string>
+    <string name="label_cycles">Cycles</string>
+
+    <string name="warn_notifications">Notifications are turned off, so the agent will run without showing what it is doing.</string>
+    <string name="warn_battery">Battery optimisation can pause the agent when the screen is off. Exempting Reyaak keeps it running on schedule.</string>
+</resources>

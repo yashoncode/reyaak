@@ -13,7 +13,9 @@ import io.reyaak.router.model.ChatMessage
 import io.reyaak.router.model.Role
 import io.reyaak.router.time.epochMillis
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.withContext
 
 /**
  * One conversational turn, persisted.
@@ -80,62 +82,86 @@ class ChatEngine(
 
         val context = buildContext(history)
         val reply = StringBuilder()
+        // Whether a terminal event already wrote the assistant row. Cancellation
+        // is the third way this turn can end, and it is the only one that would
+        // otherwise leave a half-arrived reply unpersisted.
+        var settled = false
 
         agent.busy("Routing a turn")
 
-        llm.stream(
-            messages = context,
-            // Read per turn: a tool the user enables mid-conversation is
-            // available on the next message with nothing to restart.
-            tools = tools?.definitions() ?: emptyList(),
-            toolRunner = tools?.let { registry -> { call -> registry.run(call) } },
-        ).collect { event ->
-            when (event) {
-                is TurnEvent.ToolStarted -> {
-                    agent.busy("Running ${event.name}")
-                    emit(event)
-                }
-                is TurnEvent.ToolFinished -> emit(event)
-                is TurnEvent.Delta -> {
-                    if (reply.isEmpty()) agent.busy("Answering")
-                    reply.append(event.text)
-                    emit(event)
-                }
-                is TurnEvent.Complete -> {
-                    dao.insertMessage(
-                        MessageEntity(
-                            conversationId = conversationId,
-                            role = Role.ASSISTANT.name.lowercase(),
-                            content = event.text,
-                            createdAt = now(),
-                            platform = event.served.providerId,
-                            modelId = event.served.modelId,
-                            promptTokens = event.usage.promptTokens,
-                            completionTokens = event.usage.completionTokens,
-                            latencyMs = event.served.latencyMs,
-                            attempts = event.served.attempts,
+        try {
+            llm.stream(
+                messages = context,
+                // Read per turn: a tool the user enables mid-conversation is
+                // available on the next message with nothing to restart.
+                tools = tools?.definitions() ?: emptyList(),
+                toolRunner = tools?.let { registry -> { call -> registry.run(call) } },
+            ).collect { event ->
+                when (event) {
+                    is TurnEvent.ToolStarted -> {
+                        agent.busy("Running ${event.name}")
+                        emit(event)
+                    }
+                    is TurnEvent.ToolFinished -> emit(event)
+                    is TurnEvent.Delta -> {
+                        if (reply.isEmpty()) agent.busy("Answering")
+                        reply.append(event.text)
+                        emit(event)
+                    }
+                    is TurnEvent.Complete -> {
+                        settled = true
+                        dao.insertMessage(
+                            MessageEntity(
+                                conversationId = conversationId,
+                                role = Role.ASSISTANT.name.lowercase(),
+                                content = event.text,
+                                createdAt = now(),
+                                platform = event.served.providerId,
+                                modelId = event.served.modelId,
+                                promptTokens = event.usage.promptTokens,
+                                completionTokens = event.usage.completionTokens,
+                                latencyMs = event.served.latencyMs,
+                                attempts = event.served.attempts,
+                            )
                         )
-                    )
-                    dao.touchConversation(conversationId, now())
-                    agent.turnDone("Answered via ${event.served.providerId}")
-                    emit(event)
-                }
-                is TurnEvent.Failed -> {
-                    dao.insertMessage(
-                        MessageEntity(
-                            conversationId = conversationId,
-                            role = Role.ASSISTANT.name.lowercase(),
-                            // Keep whatever text did arrive: a cut-off answer is
-                            // still worth more to the reader than nothing.
-                            content = reply.toString(),
-                            createdAt = now(),
-                            error = event.message,
+                        dao.touchConversation(conversationId, now())
+                        agent.turnDone("Answered via ${event.served.providerId}")
+                        emit(event)
+                    }
+                    is TurnEvent.Failed -> {
+                        settled = true
+                        dao.insertMessage(
+                            MessageEntity(
+                                conversationId = conversationId,
+                                role = Role.ASSISTANT.name.lowercase(),
+                                // Keep whatever text did arrive: a cut-off answer is
+                                // still worth more to the reader than nothing.
+                                content = reply.toString(),
+                                createdAt = now(),
+                                error = event.message,
+                            )
                         )
-                    )
-                    dao.touchConversation(conversationId, now())
-                    agent.turnDone("Turn failed")
-                    emit(event)
+                        dao.touchConversation(conversationId, now())
+                        agent.turnDone("Turn failed")
+                        emit(event)
+                    }
                 }
+            }
+        } finally {
+            // Stopping a turn is the third way it can end. Cancellation
+            // unwinds before any terminal event arrives, so without this the
+            // text already on screen would be dropped on the way out.
+            if (!settled && reply.isNotEmpty()) withContext(NonCancellable) {
+                dao.insertMessage(
+                    MessageEntity(
+                        conversationId = conversationId,
+                        role = Role.ASSISTANT.name.lowercase(),
+                        content = reply.toString(),
+                        createdAt = now(),
+                    )
+                )
+                dao.touchConversation(conversationId, now())
+                agent.turnDone("Turn stopped")
             }
         }
     }

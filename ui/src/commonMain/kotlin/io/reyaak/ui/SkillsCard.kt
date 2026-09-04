@@ -2,20 +2,16 @@ package io.reyaak.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -26,7 +22,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.reyaak.core.ReyaakCore
@@ -42,78 +38,83 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun SkillsCard(core: ReyaakCore) {
+    val t = LocalTokens.current
+    val feedback = LocalFeedback.current
     val scope = rememberCoroutineScope()
     val skills by core.skills.skills.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf<Skill?>(null) }
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.animateContentSize(),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "Skills",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        skills.count { it.enabled }.let {
-                            if (it == 0) "None active. The agent answers as itself."
-                            else "$it active, applied from your next message."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                TextButton(
-                    onClick = {
-                        editing = Skill(id = newId(skills), name = "", instructions = "")
-                    }
-                ) { Text("New") }
+    Glass(radius = 20.dp, modifier = Modifier.animateContentSize()) {
+        Row(verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f)) {
+                CardTitle("Skills")
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    skills.count { it.enabled }.let {
+                        if (it == 0) "None active. The agent answers as itself."
+                        else "$it active, applied from your next message."
+                    },
+                    color = t.mut,
+                    style = rk(400, 12.0, 1.45),
+                )
             }
-
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-
-            skills.forEach { skill ->
-                Row(
-                    Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            skill.name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            skill.summary.ifBlank { skill.instructions.take(70) },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2,
-                        )
-                    }
-                    TextButton(onClick = { editing = skill }) { Text("Edit") }
-                    Switch(
-                        checked = skill.enabled,
-                        onCheckedChange = { on ->
-                            scope.launch { core.skills.setEnabled(skill.id, on) }
-                        },
-                    )
-                }
-            }
-
-            Text(
-                "Active skills are added to the prompt after the base rules and " +
-                    "before your personalisation, so your own voice still wins.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Spacer(Modifier.width(10.dp))
+            RkChipButton(
+                label = "New",
+                accent = true,
+                onClick = { editing = Skill(id = newId(skills), name = "", instructions = "") },
             )
         }
+
+        Spacer(Modifier.height(14.dp))
+        GlassDivider()
+
+        if (skills.isEmpty()) {
+            Text(
+                "None yet. A skill is a few lines telling the agent how to answer.",
+                Modifier.padding(vertical = 14.dp),
+                color = t.mut,
+                style = rk(400, 12.5, 1.5),
+            )
+        }
+
+        skills.forEach { skill ->
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(skill.name, color = t.ink, style = rk(400, 13.5, 1.3))
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        skill.summary.ifBlank { skill.instructions.take(70) },
+                        color = t.mut,
+                        style = rk(400, 11.5, 1.45),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.width(11.dp))
+                RkTextAction(
+                    "Edit",
+                    onClick = { editing = skill },
+                    tint = t.mut,
+                    fontSize = 11.5,
+                )
+                Spacer(Modifier.width(11.dp))
+                RkSwitch(
+                    checked = skill.enabled,
+                    onChange = { on -> scope.launch { core.skills.setEnabled(skill.id, on) } },
+                )
+            }
+            GlassDivider()
+        }
+
+        Spacer(Modifier.height(13.dp))
+        FootNote(
+            "Active skills are added to the prompt after the base rules and " +
+                "before your personalisation, so your own voice still wins."
+        )
     }
 
     editing?.let { skill ->
@@ -125,8 +126,24 @@ fun SkillsCard(core: ReyaakCore) {
                 editing = null
             },
             onDelete = {
-                scope.launch { core.skills.delete(skill.id) }
-                editing = null
+                // A built-in resets to its shipped wording, so only a custom
+                // skill can actually lose text. That one asks first.
+                if (skill.builtin) {
+                    scope.launch { core.skills.delete(skill.id) }
+                    editing = null
+                } else {
+                    editing = null
+                    feedback.confirm(
+                        Confirmation(
+                            title = "Delete this skill?",
+                            body = "“${skill.name}” and its instructions are removed. " +
+                                "This cannot be undone.",
+                            cta = "Delete",
+                            danger = true,
+                            run = { scope.launch { core.skills.delete(skill.id) } },
+                        )
+                    )
+                }
             },
         )
     }
@@ -139,45 +156,47 @@ private fun SkillDialog(
     onSave: (Skill) -> Unit,
     onDelete: () -> Unit,
 ) {
+    val t = LocalTokens.current
     var name by remember(skill.id) { mutableStateOf(skill.name) }
     var summary by remember(skill.id) { mutableStateOf(skill.summary) }
     var instructions by remember(skill.id) { mutableStateOf(skill.instructions) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (skill.name.isBlank()) "New skill" else skill.name) },
+        containerColor = t.sheet,
+        shape = RoundedCornerShape(24.dp),
+        title = {
+            Text(
+                if (skill.name.isBlank()) "New skill" else skill.name,
+                color = t.ink,
+                style = rk(600, 18.0, 1.25),
+            )
+        },
         text = {
-            Column {
-                OutlinedTextField(
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                RkLabelledField(
+                    label = "Name",
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "Terse answers",
                 )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
+                RkLabelledField(
+                    label = "One-line summary",
                     value = summary,
                     onValueChange = { summary = it },
-                    label = { Text("One-line summary") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "No preamble, no offers to help further",
                 )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
+                RkLabelledField(
+                    label = "Instructions",
                     value = instructions,
                     onValueChange = { instructions = it },
-                    label = { Text("Instructions") },
-                    minLines = 4,
+                    placeholder = "Answer in at most three sentences.",
                     maxLines = 10,
-                    modifier = Modifier.fillMaxWidth(),
                 )
                 AnimatedVisibility(visible = skill.builtin) {
-                    Text(
+                    FootNote(
                         "Built in. Deleting resets it to the shipped wording " +
-                            "rather than removing it.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            "rather than removing it."
                     )
                 }
             }
@@ -194,16 +213,22 @@ private fun SkillDialog(
                     )
                 },
                 enabled = name.isNotBlank() && instructions.isNotBlank(),
-            ) { Text("Save") }
+            ) { Text("Save", color = t.accLt, style = rk(500, 13.5, 1.0)) }
         },
         dismissButton = {
             Row {
                 if (skill.name.isNotBlank()) {
                     TextButton(onClick = onDelete) {
-                        Text(if (skill.builtin) "Reset" else "Delete")
+                        Text(
+                            if (skill.builtin) "Reset" else "Delete",
+                            color = t.err,
+                            style = rk(500, 13.5, 1.0),
+                        )
                     }
                 }
-                TextButton(onClick = onDismiss) { Text("Cancel") }
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = t.mut, style = rk(500, 13.5, 1.0))
+                }
             }
         },
     )

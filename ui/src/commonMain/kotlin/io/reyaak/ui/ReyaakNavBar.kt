@@ -1,51 +1,54 @@
 package io.reyaak.ui
 
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 
-/** One destination in the floating bar. */
+/** One destination in the floating bar. [glyph] is a [Ph] codepoint. */
 data class NavDestination(val id: String, val label: String, val glyph: String)
 
 /**
- * A floating, glassy navigation bar.
+ * The floating glass tab bar.
  *
- * Two deliberate notes on the "glass":
+ * The selection is one pill that slides between four fixed slots rather than a
+ * background that fades in under each tab. That is the whole reason the bar
+ * reads as a single object: the highlight is a thing that moves, so the eye
+ * follows it instead of re-finding it.
  *
- * Compose has no backdrop blur: `Modifier.blur` blurs an element's own
- * content, not what is behind it, and sampling the backdrop needs either a
- * third-party layer (haze) or a RenderEffect pass that only works on API 31+.
- * So the glass here is built the way it is built in most shipping apps: a
- * translucent fill over the app background, a hairline top-left highlight, and
- * a soft shadow to lift it off the content. It reads as glass on both
- * platforms and costs nothing.
- *
- * It lives in :ui rather than the Android host because it is the app's
- * chrome, not the OS's: an iOS host composes the same bar.
+ * It lives in :ui rather than the Android host because it is the app's chrome,
+ * not the OS's: an iOS host composes the same bar.
  */
 @Composable
 fun ReyaakNavBar(
@@ -55,107 +58,106 @@ fun ReyaakNavBar(
     modifier: Modifier = Modifier,
 ) {
     val haptics = LocalHapticFeedback.current
-    val scheme = MaterialTheme.colorScheme
+    val t = LocalTokens.current
+    val shape = RoundedCornerShape(28.dp)
+    val index = destinations.indexOfFirst { it.id == selectedId }.coerceAtLeast(0)
 
     Box(
-        modifier = modifier
+        modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        contentAlignment = Alignment.Center,
+            .padding(horizontal = 14.dp, vertical = 16.dp)
     ) {
-        Row(
-            modifier = Modifier
+        BoxWithConstraints(
+            Modifier
                 .fillMaxWidth()
-                .height(64.dp)
-                .clip(RoundedCornerShape(32.dp))
-                // The fill is the surface at partial alpha so the transcript
-                // shows through, with a vertical lift so the bar does not read
-                // as a flat slab.
+                .shadow(18.dp, shape, clip = false)
+                .clip(shape)
+                .background(t.g1)
+                // The bar sits over a transcript, so the fill alone would read
+                // as a smear. A stronger base plus the top sheen is what gives
+                // it an edge without a blur pass.
+                .background(t.bg.copy(alpha = if (t.dark) 0.62f else 0.55f))
                 .background(
                     Brush.verticalGradient(
-                        listOf(
-                            scheme.surfaceVariant.copy(alpha = 0.92f),
-                            scheme.surface.copy(alpha = 0.86f),
-                        )
+                        0f to Color.White.copy(alpha = if (t.dark) 0.07f else 0.34f),
+                        0.46f to Color.Transparent,
                     )
                 )
-                .border(
-                    width = 1.dp,
-                    brush = Brush.verticalGradient(
-                        listOf(
-                            scheme.onSurface.copy(alpha = 0.14f),
-                            scheme.onSurface.copy(alpha = 0.04f),
-                        )
-                    ),
-                    shape = RoundedCornerShape(32.dp),
-                )
-                .padding(horizontal = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceEvenly,
+                .border(1.dp, t.line, shape)
+                .padding(horizontal = 8.dp, vertical = 7.dp)
         ) {
-            destinations.forEach { destination ->
-                NavPill(
-                    destination = destination,
-                    selected = destination.id == selectedId,
-                    onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onSelect(destination.id)
-                    },
-                    modifier = Modifier.weight(1f),
-                )
+            // (bar - horizontal padding - the 2dp gaps between four slots) / 4
+            val slot = (maxWidth - 6.dp) / destinations.size
+            val offset by animateDpAsState(
+                targetValue = (slot + 2.dp) * index,
+                animationSpec = tween(480, easing = CubicBezierEasing(0.22f, 1.2f, 0.32f, 1f)),
+                label = "pill",
+            )
+            val pillShape = RoundedCornerShape(20.dp)
+            Box(
+                Modifier
+                    .offset(x = offset)
+                    .width(slot)
+                    .height(50.dp)
+                    .clip(pillShape)
+                    .background(t.accSoft)
+                    .border(1.dp, t.accLine, pillShape)
+            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                destinations.forEach { destination ->
+                    NavTab(
+                        destination = destination,
+                        selected = destination.id == selectedId,
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onSelect(destination.id)
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun NavPill(
+private fun NavTab(
     destination: NavDestination,
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val scheme = MaterialTheme.colorScheme
-    // A 48dp target with a hit slop that fills the bar height, so the pill can
-    // look small without being hard to hit.
-    val tint by animateColorAsState(
-        if (selected) scheme.primary else scheme.onSurfaceVariant,
-        label = "navTint",
-    )
-    val glyphScale by animateFloatAsState(
-        if (selected) 1.12f else 1f,
-        label = "navGlyph",
-    )
+    val t = LocalTokens.current
+    val tint = if (selected) t.accLt else t.mut
+    val pop by animateFloatAsState(if (selected) 1f else 0.92f, tween(320), label = "tabPop")
 
-    Box(
-        modifier = modifier
-            .height(52.dp)
-            .clip(RoundedCornerShape(26.dp))
-            .background(
-                if (selected) scheme.primary.copy(alpha = 0.16f)
-                else scheme.surface.copy(alpha = 0f)
+    Column(
+        modifier
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
             )
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
+            .padding(top = 8.dp, bottom = 7.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
-                Text(
-                    text = destination.glyph,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = tint,
-                    modifier = Modifier.scale(glyphScale),
-                )
-            }
-            Text(
-                text = destination.label,
-                style = MaterialTheme.typography.labelSmall,
-                color = tint,
-            )
-        }
+        PhIcon(
+            glyph = destination.glyph,
+            size = 20.0,
+            tint = tint,
+            fill = selected,
+            modifier = Modifier.scale(pop),
+        )
+        Spacer(Modifier.height(5.dp))
+        Text(
+            destination.label,
+            color = tint,
+            style = rk(if (selected) 600 else 400, 10.0, 1.0),
+        )
     }
 }

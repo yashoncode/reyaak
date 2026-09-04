@@ -1,28 +1,31 @@
 package io.reyaak.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -32,10 +35,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.reyaak.core.ReyaakCore
@@ -59,7 +63,8 @@ import kotlinx.coroutines.launch
  * the router's own choice, which is the more useful default.
  */
 @Composable
-fun PlaygroundCard(core: ReyaakCore) {
+fun PlaygroundScreen(core: ReyaakCore) {
+    val t = LocalTokens.current
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
 
@@ -78,70 +83,94 @@ fun PlaygroundCard(core: ReyaakCore) {
     var job by remember { mutableStateOf<Job?>(null) }
     var running by remember { mutableStateOf(false) }
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(14.dp),
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 30.dp)
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                "Playground",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                "Send one prompt straight through the router. No agent and no transcript: " +
-                    "this is for checking a key or comparing a model.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
+        Text(
+            "Send one prompt straight through the router. No agent and no transcript: " +
+                "this is for checking a key or comparing a model.",
+            color = t.mut,
+            style = rk(400, 13.0, 1.6),
+        )
 
-            OutlinedTextField(
-                value = prompt,
-                onValueChange = { prompt = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Prompt") },
-                maxLines = 5,
-                shape = RoundedCornerShape(12.dp),
-            )
-            Spacer(Modifier.height(8.dp))
-            Box(Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = { pinMenu = true },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    enabled = pinnable.isNotEmpty(),
-                ) {
-                    Text(
-                        when {
-                            pinnable.isEmpty() -> "No routable model. Add a key first."
-                            pin == null -> "Model: router chooses"
-                            else -> "Model: ${pin!!}"
-                        }
-                    )
-                }
-                DropdownMenu(expanded = pinMenu, onDismissRequest = { pinMenu = false }) {
+        Spacer(Modifier.height(18.dp))
+        Text("Prompt", color = t.mut, style = rk(400, 11.5, 1.0))
+        Spacer(Modifier.height(7.dp))
+        RkField(
+            value = prompt,
+            onValueChange = { prompt = it },
+            placeholder = "Ask one thing",
+            minLines = 4,
+            maxLines = 8,
+        )
+
+        Spacer(Modifier.height(10.dp))
+        Box(Modifier.fillMaxWidth()) {
+            val shape = RoundedCornerShape(14.dp)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .clip(shape)
+                    .background(t.g1)
+                    .border(1.dp, t.line, shape)
+                    .clickable(enabled = pinnable.isNotEmpty()) { pinMenu = true }
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MonoText(
+                    when {
+                        pinnable.isEmpty() -> "No routable model. Add a key first."
+                        pin == null -> "Model: router chooses"
+                        else -> "Model: ${pin!!}"
+                    },
+                    Modifier.weight(1f),
+                    size = 13.0,
+                    maxLines = 1,
+                )
+                PhIcon(Ph.CARET_DOWN, 13.0, t.faint)
+            }
+            DropdownMenu(expanded = pinMenu, onDismissRequest = { pinMenu = false }) {
+                DropdownMenuItem(
+                    text = { Text("Router chooses", color = t.ink, style = rk(400, 13.0, 1.3)) },
+                    onClick = { pin = null; pinMenu = false },
+                )
+                pinnable.forEach { spec ->
                     DropdownMenuItem(
-                        text = { Text("Router chooses") },
-                        onClick = { pin = null; pinMenu = false },
+                        text = {
+                            Text(
+                                "${spec.platform} / ${spec.displayName}",
+                                color = t.ink,
+                                style = rk(400, 13.0, 1.3),
+                            )
+                        },
+                        // The router matches a pin against modelId OR
+                        // platform/modelId, so the composite key is what
+                        // disambiguates a model served by two providers.
+                        onClick = { pin = spec.key; pinMenu = false },
                     )
-                    pinnable.forEach { spec ->
-                        DropdownMenuItem(
-                            text = { Text("${spec.platform} / ${spec.displayName}") },
-                            // The router matches a pin against modelId OR
-                            // platform/modelId, so the composite key is what
-                            // disambiguates a model served by two providers.
-                            onClick = { pin = spec.key; pinMenu = false },
-                        )
-                    }
                 }
             }
-            Spacer(Modifier.height(12.dp))
+        }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(
-                    onClick = {
+        Spacer(Modifier.height(12.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            val ready = prompt.isNotBlank() && !running
+            val shape = RoundedCornerShape(14.dp)
+            Row(
+                Modifier
+                    .weight(1f)
+                    .height(44.dp)
+                    .clip(shape)
+                    .background(if (prompt.isNotBlank()) t.accSoft else Color.Transparent)
+                    .border(1.dp, t.accLine, shape)
+                    .clickable(enabled = ready) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         reply = ""
                         footnote = null
@@ -185,55 +214,76 @@ fun PlaygroundCard(core: ReyaakCore) {
                                 running = false
                             }
                         }
-                    },
-                    enabled = prompt.isNotBlank() && !running,
-                ) { Text("Run") }
-
-                if (running) {
-                    Spacer(Modifier.width(12.dp))
-                    CircularProgressIndicator(Modifier.height(18.dp).width(18.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(12.dp))
-                    OutlinedButton(onClick = { job?.cancel() }) { Text("Stop") }
-                }
+                    }
+                    .alpha(if (ready) 1f else 0.45f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                PhIcon(Ph.PLAY, 14.0, t.accLt)
+                Spacer(Modifier.width(8.dp))
+                Text("Run", color = t.accLt, style = rk(500, 13.5, 1.0))
             }
 
-            if (reply.isNotEmpty() || error != null || footnote != null) {
-                Spacer(Modifier.height(12.dp))
-                Surface(
-                    color = MaterialTheme.colorScheme.background,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
+            if (running) {
+                Spinner()
+                RkButton(
+                    label = "Stop",
+                    onClick = { job?.cancel() },
+                    tone = ButtonTone.NEUTRAL,
+                    height = 44.dp,
+                    fontSize = 13.0,
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = reply.isNotEmpty() || error != null || footnote != null,
+            enter = slideInVertically(tween(260)) { it / 4 } + fadeIn(tween(260)),
+        ) {
+            val panel = RoundedCornerShape(14.dp)
+            Column(
+                Modifier
+                    .padding(top = 14.dp)
+                    .fillMaxWidth()
+                    .clip(panel)
+                    .background(t.tile)
+                    .border(1.dp, t.line2, panel)
+                    .padding(14.dp)
+            ) {
+                Column(
+                    Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
                 ) {
-                    Column(
-                        Modifier.padding(12.dp).heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        if (reply.isNotEmpty()) {
-                            Text(
-                                reply,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                        }
-                        error?.let {
-                            Text(
-                                it,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
-                        footnote?.let {
-                            Text(
-                                it,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                    if (reply.isNotEmpty()) {
+                        Text(
+                            reply,
+                            color = if (t.dark) t.ink else Color(0xFFE8ECF4),
+                            style = rk(400, 12.5, 1.65, mono = true),
+                        )
                     }
+                    error?.let {
+                        if (reply.isNotEmpty()) Spacer(Modifier.height(8.dp))
+                        Text(it, color = t.err, style = rk(400, 12.5, 1.5))
+                    }
+                }
+                footnote?.let {
+                    Spacer(Modifier.height(12.dp))
+                    GlassDivider()
+                    Spacer(Modifier.height(10.dp))
+                    MonoText(it, size = 10.5, tint = t.faint)
                 }
             }
         }
     }
+}
+
+/** rkSpin: the 18dp ring the design spins beside a running prompt. */
+@Composable
+private fun Spinner() {
+    val t = LocalTokens.current
+    CircularProgressIndicator(
+        modifier = Modifier.size(18.dp),
+        color = t.acc,
+        trackColor = t.g3,
+        strokeWidth = 2.dp,
+    )
 }

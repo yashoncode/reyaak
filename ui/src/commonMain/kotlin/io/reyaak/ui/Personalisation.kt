@@ -1,27 +1,25 @@
 package io.reyaak.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.reyaak.core.ReyaakCore
@@ -37,6 +35,8 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun PersonalisationCard(core: ReyaakCore) {
+    val t = LocalTokens.current
+    val feedback = LocalFeedback.current
     val scope = rememberCoroutineScope()
     val saved by core.persona.persona.collectAsStateWithLifecycle()
 
@@ -44,111 +44,104 @@ fun PersonalisationCard(core: ReyaakCore) {
     // makes the fields show the persisted persona once startup has read it.
     var draft by remember(saved) { mutableStateOf(saved) }
     var savedNote by remember { mutableStateOf(false) }
+    val dirty = draft != saved
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(14.dp),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                "Personalisation",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                "Shapes how the agent talks to you. Every field is optional, and " +
-                    "changes apply from your next message.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
+    Glass(radius = 20.dp) {
+        CardTitle("Personalisation")
+        Spacer(Modifier.height(5.dp))
+        CardBody(
+            "Shapes how the agent talks to you. Every field is optional, and " +
+                "changes apply from your next message."
+        )
+        Spacer(Modifier.height(15.dp))
 
-            PersonaField(
-                value = draft.agentName,
-                onValueChange = { draft = draft.copy(agentName = it) },
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            RkLabelledField(
                 label = "What should the agent be called?",
+                value = draft.agentName,
+                onValueChange = { draft = draft.copy(agentName = it); savedNote = false },
                 placeholder = "Reyaak",
             )
-            PersonaField(
-                value = draft.userName,
-                onValueChange = { draft = draft.copy(userName = it) },
+            RkLabelledField(
                 label = "What should it call you?",
+                value = draft.userName,
+                onValueChange = { draft = draft.copy(userName = it); savedNote = false },
                 placeholder = "Yash",
             )
-            PersonaField(
-                value = draft.traits,
-                onValueChange = { draft = draft.copy(traits = it) },
+            RkLabelledField(
                 label = "What character should it have?",
+                value = draft.traits,
+                onValueChange = { draft = draft.copy(traits = it); savedNote = false },
                 placeholder = "Dry, skeptical, no flattery",
-                lines = 3,
+                maxLines = 3,
             )
-            PersonaField(
-                value = draft.about,
-                onValueChange = { draft = draft.copy(about = it) },
+            RkLabelledField(
                 label = "What should it know about you?",
+                value = draft.about,
+                onValueChange = { draft = draft.copy(about = it); savedNote = false },
                 placeholder = "Android dev, Kotlin and KMP, prefers short answers",
-                lines = 4,
+                maxLines = 4,
             )
-            PersonaField(
-                value = draft.instructions,
-                onValueChange = { draft = draft.copy(instructions = it) },
+            RkLabelledField(
                 label = "Anything else it should follow?",
+                value = draft.instructions,
+                onValueChange = { draft = draft.copy(instructions = it); savedNote = false },
                 placeholder = "Show code before explaining it",
-                lines = 4,
+                maxLines = 4,
             )
+        }
 
-            Row {
-                OutlinedButton(
+        Spacer(Modifier.height(14.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            DirtySave(
+                dirty = dirty,
+                onClick = {
+                    scope.launch {
+                        core.persona.save(draft)
+                        savedNote = true
+                    }
+                },
+                modifier = Modifier.weight(1f),
+            )
+            if (dirty) {
+                RkButton(
+                    label = "Revert",
+                    onClick = { draft = saved },
+                    tone = ButtonTone.NEUTRAL,
+                    radius = 13.dp,
+                    fontSize = 13.0,
+                )
+            } else if (!draft.isEmpty) {
+                RkButton(
+                    label = "Clear",
                     onClick = {
                         scope.launch {
-                            core.persona.save(draft)
-                            savedNote = true
+                            core.persona.save(Persona())
+                            savedNote = false
+                            feedback.say("Personalisation cleared.")
                         }
                     },
-                    enabled = draft != saved,
-                ) { Text("Save") }
-                if (draft != saved) {
-                    TextButton(onClick = { draft = saved }) { Text("Revert") }
-                } else if (!draft.isEmpty) {
-                    TextButton(
-                        onClick = {
-                            scope.launch {
-                                core.persona.save(Persona())
-                                savedNote = false
-                            }
-                        }
-                    ) { Text("Clear") }
-                }
-            }
-
-            if (savedNote && draft == saved) {
-                Text(
-                    "Saved. It applies from your next message.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tone = ButtonTone.NEUTRAL,
+                    radius = 13.dp,
+                    fontSize = 13.0,
                 )
             }
         }
-    }
-}
 
-@Composable
-private fun PersonaField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    label: String,
-    placeholder: String,
-    lines: Int = 1,
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-        label = { Text(label) },
-        placeholder = { Text(placeholder) },
-        singleLine = lines == 1,
-        maxLines = lines,
-        shape = RoundedCornerShape(12.dp),
-    )
+        AnimatedVisibility(
+            visible = savedNote && !dirty,
+            enter = fadeIn(tween(300)),
+            exit = fadeOut(tween(180)),
+        ) {
+            Text(
+                "Saved. It applies from your next message.",
+                Modifier.padding(top = 9.dp),
+                color = t.accLt,
+                style = rk(400, 11.5, 1.5),
+            )
+        }
+    }
 }

@@ -1,9 +1,15 @@
 package io.reyaak.ui
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,31 +26,27 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.reyaak.router.catalog.BuiltinCatalog
 import io.reyaak.router.score.RoutingStrategy
 import io.reyaak.vm.ChainRow
 import io.reyaak.vm.ModelRow
@@ -60,24 +62,52 @@ fun RouterScreen(
     onOpenUrl: (String) -> Unit,
     onPickDocument: (onText: (String?) -> Unit) -> Unit,
     onSaveDocument: (fileName: String, content: String, onSaved: () -> Unit) -> Unit,
+    bottomPadding: Dp = NavBarSpace,
 ) {
+    val t = LocalTokens.current
+    val feedback = LocalFeedback.current
     val state by vm.state.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val usage by vm.usage.collectAsStateWithLifecycle()
 
     var keyDialogFor by remember { mutableStateOf<String?>(null) }
-    var pendingImport by remember { mutableStateOf<String?>(null) }
     var showOrderEditor by remember { mutableStateOf(false) }
+
+    // The router used to own the app's only feedback banner. It now hands its
+    // notices to the same channel every other screen uses, so there is one
+    // place a message can appear rather than one per screen that bothered.
+    LaunchedEffect(notice) {
+        notice?.let {
+            feedback.toast(it.text, it.isError, it.warnings)
+            vm.dismissNotice()
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
-            contentPadding = PaddingValues(16.dp),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 2.dp,
+                bottom = bottomPadding,
+            ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                SectionTitle("Routing strategy")
-                StrategyPicker(state.strategy) { vm.setStrategy(it) }
+                Column {
+                    ScreenTitle("Router", Modifier.padding(top = 14.dp, bottom = 4.dp))
+                    Text(
+                        "Scored across ${BuiltinCatalog.providers.size} providers. " +
+                            "Whatever breaks gets benched.",
+                        color = t.mut,
+                        style = rk(400, 13.0, 1.55),
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    SectionLabel("Routing strategy")
+                    Spacer(Modifier.height(10.dp))
+                    StrategyPicker(state.strategy) { vm.setStrategy(it) }
+                }
             }
 
             item { ChainCard(state.chain, state.chainExclusions) }
@@ -93,32 +123,76 @@ fun RouterScreen(
             }
 
             item {
-                SectionTitle("Configuration")
                 ConfigCard(
                     onRestart = { vm.restartRouter() },
                     onImport = {
                         onPickDocument { text ->
                             // Ask merge-or-replace rather than assuming: replacing
                             // would silently drop the key in use right now.
-                            if (text.isNullOrBlank()) vm.import("", merge = true)
-                            else pendingImport = text
+                            if (text.isNullOrBlank()) {
+                                vm.import("", merge = true)
+                            } else {
+                                feedback.confirm(
+                                    Confirmation(
+                                        title = "Import router config",
+                                        body = "Merge keeps your current keys and layers " +
+                                            "this file on top. Replace discards everything " +
+                                            "you have now.",
+                                        cta = "Merge",
+                                        run = { vm.import(text, merge = true) },
+                                        alt = "Replace" to { vm.import(text, merge = false) },
+                                    )
+                                )
+                            }
                         }
                     },
-                    onExport = { withSecrets ->
-                        onSaveDocument("reyaak-router.json", vm.exportJson(withSecrets)) {
-                            vm.onExported(withSecrets)
-                        }
+                    onExport = {
+                        feedback.confirm(
+                            Confirmation(
+                                title = "Include API keys?",
+                                body = "An export without keys describes your setup safely. " +
+                                    "With keys it is a credential file, only for moving to " +
+                                    "another device.",
+                                cta = "Without keys",
+                                run = {
+                                    onSaveDocument("reyaak-router.json", vm.exportJson(false)) {
+                                        vm.onExported(false)
+                                    }
+                                },
+                                alt = "With keys" to {
+                                    onSaveDocument("reyaak-router.json", vm.exportJson(true)) {
+                                        vm.onExported(true)
+                                    }
+                                },
+                            )
+                        )
                     },
                 )
             }
 
-            item { SectionTitle("Providers") }
+            item {
+                SectionLabel("Providers", Modifier.padding(top = 14.dp, bottom = 0.dp))
+            }
 
             items(state.providers, key = { it.provider.id }) { row ->
                 ProviderCard(
                     row = row,
                     onAddKey = { keyDialogFor = row.provider.id },
-                    onRemoveKey = { label -> vm.removeKey(row.provider.id, label) },
+                    onRemoveKey = { label ->
+                        // Removing a key un-routes every model that depended on
+                        // it, and the secret is not recoverable, so it asks.
+                        feedback.confirm(
+                            Confirmation(
+                                title = "Remove this key?",
+                                body = "The $label key for ${row.provider.label} is deleted " +
+                                    "from the encrypted store. Models that depend on it stop " +
+                                    "being routable.",
+                                cta = "Remove",
+                                danger = true,
+                                run = { vm.removeKey(row.provider.id, label) },
+                            )
+                        )
+                    },
                     onToggleKey = { label, on -> vm.toggleKey(row.provider.id, label, on) },
                     onRefreshModels = { vm.refreshModels(row.provider.id) },
                     onToggleModel = { key, on -> vm.toggleModel(key, on) },
@@ -131,27 +205,16 @@ fun RouterScreen(
 
             if (usage.isNotEmpty()) {
                 item {
-                    SectionTitle("Usage")
-                    UsageCard(usage)
+                    Column {
+                        SectionLabel("Usage", Modifier.padding(top = 14.dp))
+                        Spacer(Modifier.height(10.dp))
+                        UsageCard(usage)
+                    }
                 }
             }
-
-            item { Spacer(Modifier.height(NavBarSpace)) }
         }
 
-        notice?.let { current ->
-            NoticeBanner(
-                text = current.text,
-                warnings = current.warnings,
-                isError = current.isError,
-                onDismiss = { vm.dismissNotice() },
-                modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
-            )
-        }
-
-        if (busy) {
-            LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
-        }
+        if (busy) BusyBar(Modifier.align(Alignment.TopCenter))
     }
 
     keyDialogFor?.let { platform ->
@@ -174,127 +237,123 @@ fun RouterScreen(
             onDismiss = { showOrderEditor = false },
         )
     }
-
-    pendingImport?.let { json ->
-        AlertDialog(
-            onDismissRequest = { pendingImport = null },
-            title = { Text("Import router config") },
-            text = {
-                Text(
-                    "Merge keeps your current keys and layers this file on top. " +
-                        "Replace discards everything you have now."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.import(json, merge = true)
-                    pendingImport = null
-                }) { Text("Merge") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    vm.import(json, merge = false)
-                    pendingImport = null
-                }) { Text("Replace") }
-            },
-        )
-    }
-}
-
-@Composable
-private fun SectionTitle(text: String) {
-    Text(
-        text = text.uppercase(),
-        style = MaterialTheme.typography.labelMedium,
-        fontFamily = FontFamily.Monospace,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
-    )
 }
 
 @Composable
 private fun StrategyPicker(current: RoutingStrategy, onPick: (RoutingStrategy) -> Unit) {
-    val options = listOf(
-        RoutingStrategy.BALANCED to "Balanced",
-        RoutingStrategy.FASTEST to "Fastest",
-        RoutingStrategy.SMARTEST to "Smartest",
-        RoutingStrategy.RELIABLE to "Reliable",
-        RoutingStrategy.PRIORITY to "Manual order",
-    )
+    val t = LocalTokens.current
     Column {
-        androidx.compose.foundation.layout.FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
-            options.forEach { (strategy, label) ->
-                FilterChip(
-                    selected = current == strategy,
-                    onClick = { onPick(strategy) },
-                    label = { Text(label) },
-                )
+            SelectableStrategies.forEach { strategy ->
+                val on = current == strategy
+                val shape = RoundedCornerShape(99.dp)
+                Box(
+                    Modifier
+                        .clip(shape)
+                        .background(if (on) t.accSoft else t.g1)
+                        .border(1.dp, if (on) t.accLine else t.line, shape)
+                        .clickable(enabled = !on) { onPick(strategy) }
+                        .padding(horizontal = 13.dp, vertical = 9.dp)
+                ) {
+                    Text(
+                        strategyLabel(strategy),
+                        color = if (on) t.accLt else t.mut,
+                        style = rk(if (on) 500 else 400, 12.5, 1.0),
+                    )
+                }
             }
         }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = when (current) {
-                RoutingStrategy.BALANCED -> "Reliability leads; speed and intelligence split the rest."
-                RoutingStrategy.FASTEST -> "Prefers throughput, but a fast broken model still loses."
-                RoutingStrategy.SMARTEST -> "Prefers capability, with reliability keeping it honest."
-                RoutingStrategy.RELIABLE -> "Whatever is most likely to just work."
-                RoutingStrategy.PRIORITY -> "Follows your explicit order and skips scoring."
-                RoutingStrategy.CUSTOM -> "Custom weights from an imported config."
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Spacer(Modifier.height(11.dp))
+        Text(strategyDescription(current), color = t.mut, style = rk(400, 12.5, 1.5))
     }
 }
 
 @Composable
 private fun ChainCard(chain: List<ChainRow>, exclusions: List<String>) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(14.dp),
-    ) {
-        Column(Modifier.padding(16.dp)) {
+    val t = LocalTokens.current
+    Glass(radius = 20.dp, highlight = true, modifier = Modifier.padding(top = 6.dp)) {
+        CardTitle("Next request would try")
+        if (chain.isEmpty()) {
+            Spacer(Modifier.height(10.dp))
             Text(
-                "Next request would try",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
+                "Nothing is routable yet. Add a provider key below.",
+                color = t.mut,
+                style = rk(400, 12.5, 1.5),
             )
-            Spacer(Modifier.height(8.dp))
-            if (chain.isEmpty()) {
-                Text(
-                    "Nothing is routable yet. Add a provider key below.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                // Scores are relative, so the bar is drawn against the leader
-                // rather than against 1.0: what matters is the gap to the model
-                // that would actually be tried first.
-                val top = chain.maxOf { it.score }.coerceAtLeast(0.0001)
+        } else {
+            Spacer(Modifier.height(14.dp))
+            // Scores are relative, so the bar is drawn against the leader
+            // rather than against 1.0: what matters is the gap to the model
+            // that would actually be tried first.
+            val top = chain.maxOf { it.score }.coerceAtLeast(0.0001)
+            Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
                 chain.forEachIndexed { index, row ->
                     ChainLine(index, row, row.score / top)
                 }
             }
-            if (exclusions.isNotEmpty()) {
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Excluded",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                exclusions.forEach {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+        }
+        if (exclusions.isNotEmpty()) {
+            Spacer(Modifier.height(15.dp))
+            GlassDivider()
+            Spacer(Modifier.height(13.dp))
+            Text(
+                "EXCLUDED",
+                color = t.faint,
+                style = rk(500, 10.5, 1.0, mono = true, tracking = 0.12.em),
+            )
+            exclusions.forEach {
+                MonoText(it, Modifier.padding(top = 4.dp), size = 11.0)
             }
+        }
+    }
+}
+
+/** One chain row: rank, model, score, and a bar for the score at a glance. */
+@Composable
+private fun ChainLine(index: Int, row: ChainRow, fraction: Double) {
+    val t = LocalTokens.current
+    val leading = index == 0
+    val tint = if (leading) t.ink else t.mut
+    Column {
+        Row(verticalAlignment = Alignment.Bottom) {
+            MonoText("${index + 1}".padStart(2), size = 11.0, tint = t.faint)
+            Spacer(Modifier.width(9.dp))
+            Text(
+                row.displayName,
+                color = tint,
+                style = rk(if (leading) 600 else 400, 13.5, 1.2),
+                maxLines = 1,
+            )
+            Spacer(Modifier.width(9.dp))
+            MonoText(row.platform, Modifier.weight(1f), size = 10.5, tint = t.faint, maxLines = 1)
+            Spacer(Modifier.width(9.dp))
+            MonoText(row.score.fmt(3), size = 11.0, tint = tint)
+        }
+        Spacer(Modifier.height(7.dp))
+        // The bar animates so a score that moved after a turn reads as movement
+        // rather than as a different number in the same place.
+        val animated by animateFloatAsState(
+            targetValue = fraction.toFloat().coerceIn(0f, 1f),
+            animationSpec = tween(600),
+            label = "chainScore",
+        )
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(3.dp)
+                .clip(RoundedCornerShape(99.dp))
+                .background(t.g2)
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth(animated)
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(99.dp))
+                    .background(if (leading) t.acc else t.mut)
+            )
         }
     }
 }
@@ -311,47 +370,352 @@ private fun ManualOrderCard(
     onEdit: () -> Unit,
     onClear: () -> Unit,
 ) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(14.dp),
+    val t = LocalTokens.current
+    Glass(radius = 20.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                CardTitle("Manual order")
+                Spacer(Modifier.height(4.dp))
+                CardBody(
+                    if (order.isEmpty()) "Nothing routable to order yet."
+                    else "${order.size} models, tried top to bottom."
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            RkTextAction(
+                "Reset",
+                onClick = onClear,
+                tint = t.mut,
+                fontSize = 12.0,
+                enabled = order.isNotEmpty(),
+            )
+            Spacer(Modifier.width(4.dp))
+            RkChipButton("Edit", onClick = onEdit, accent = true, enabled = order.isNotEmpty())
+        }
+        if (order.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            order.take(3).forEachIndexed { index, row ->
+                MonoText(
+                    "${index + 1}. ${row.displayName}  ·  ${row.platform}",
+                    Modifier.padding(top = 3.dp),
+                    size = 11.0,
+                    maxLines = 1,
+                )
+            }
+            if (order.size > 3) {
+                MonoText(
+                    "+ ${order.size - 3} more",
+                    Modifier.padding(top = 5.dp),
+                    size = 10.5,
+                    tint = t.faint,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConfigCard(
+    onRestart: () -> Unit,
+    onImport: () -> Unit,
+    onExport: () -> Unit,
+) {
+    Glass(radius = 20.dp) {
+        CardBody(
+            "Import or export the router configuration. The format is the same " +
+                "declarative config FreeLLMAPI uses, so files move between them."
+        )
+        Spacer(Modifier.height(13.dp))
+        // Reload, unbench, and re-ask every provider what it serves. The
+        // same thing a fresh app start does, for when the answer changed
+        // while the app was open.
+        RkButton(
+            label = "Restart router",
+            onClick = onRestart,
+            glyph = Ph.REFRESH,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(9.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            RkButton(
+                label = "Import",
+                onClick = onImport,
+                glyph = Ph.DOWNLOAD,
+                tone = ButtonTone.NEUTRAL,
+                height = 40.dp,
+                radius = 13.dp,
+                fontSize = 13.0,
+                modifier = Modifier.weight(1f),
+            )
+            RkButton(
+                label = "Export",
+                onClick = onExport,
+                glyph = Ph.UPLOAD,
+                tone = ButtonTone.NEUTRAL,
+                height = 40.dp,
+                radius = 13.dp,
+                fontSize = 13.0,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProviderCard(
+    row: ProviderRow,
+    onAddKey: () -> Unit,
+    onRemoveKey: (String) -> Unit,
+    onToggleKey: (String, Boolean) -> Unit,
+    onRefreshModels: () -> Unit,
+    onToggleModel: (String, Boolean) -> Unit,
+    onSetAllModels: (Boolean) -> Unit,
+    onClearCooldown: (String) -> Unit,
+) {
+    val t = LocalTokens.current
+    var expanded by remember { mutableStateOf(false) }
+
+    Glass(
+        radius = 18.dp,
+        padding = PaddingValues(15.dp),
+        modifier = Modifier.animateContentSize(),
     ) {
-        Column(Modifier.padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .then(
+                        if (row.configured) Modifier.shadow(6.dp, CircleShape) else Modifier
+                    )
+                    .clip(CircleShape)
+                    .background(if (row.configured) t.accLt else t.faint)
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(row.provider.label, color = t.ink, style = rk(500, 14.5, 1.25))
+                Spacer(Modifier.height(3.dp))
+                MonoText(
+                    "${row.models.count { it.spec.enabled }} of ${row.models.size} models enabled",
+                    size = 11.0,
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            RkChipButton(if (expanded) "Hide" else "Manage", onClick = { expanded = !expanded })
+        }
+
+        if (expanded) {
+            Spacer(Modifier.height(14.dp))
+            GlassDivider()
+            Spacer(Modifier.height(13.dp))
+
+            SectionLabel("Keys", tint = t.faint)
+            if (row.keys.isEmpty()) {
+                Text(
+                    "None yet.",
+                    Modifier.padding(top = 8.dp),
+                    color = t.mut,
+                    style = rk(400, 12.5, 1.5),
+                )
+            } else {
+                row.keys.forEach { key ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(key.label, color = t.ink, style = rk(400, 13.0, 1.3))
+                            Spacer(Modifier.height(3.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                PhIcon(Ph.LOCK, 11.0, t.accLt)
+                                Spacer(Modifier.width(6.dp))
+                                // Never render the secret, even masked in full:
+                                // a shoulder-surfable prefix is enough to
+                                // identify which key this is.
+                                MonoText(
+                                    if (key.hasSecret) "•••• ${key.secret!!.takeLast(4)}"
+                                    else "no secret stored",
+                                    size = 11.0,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        RkSwitch(
+                            checked = key.enabled,
+                            onChange = { onToggleKey(key.label, it) },
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        RkTextAction(
+                            "Remove",
+                            onClick = { onRemoveKey(key.label) },
+                            tint = t.err,
+                            fontSize = 12.0,
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                RkButton(
+                    label = "Add key",
+                    onClick = onAddKey,
+                    glyph = Ph.PLUS,
+                    height = 38.dp,
+                    radius = 12.dp,
+                    fontSize = 12.5,
+                    modifier = Modifier.weight(1f),
+                )
+                RkButton(
+                    label = "Refresh models",
+                    onClick = onRefreshModels,
+                    tone = ButtonTone.NEUTRAL,
+                    height = 38.dp,
+                    radius = 12.dp,
+                    fontSize = 12.5,
+                    enabled = row.configured,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "Manual order",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        if (order.isEmpty()) "Nothing routable to order yet."
-                        else "${order.size} models, tried top to bottom.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                TextButton(onClick = onClear, enabled = order.isNotEmpty()) { Text("Reset") }
-                OutlinedButton(onClick = onEdit, enabled = order.isNotEmpty()) { Text("Edit") }
+                SectionLabel("Models", Modifier.weight(1f), tint = t.faint)
+                // Bulk, because a provider that lists 300 ids makes
+                // per-row tapping a chore rather than a choice.
+                RkTextAction("Enable all", onClick = { onSetAllModels(true) }, fontSize = 12.0)
+                Spacer(Modifier.width(6.dp))
+                RkTextAction(
+                    "Disable all",
+                    onClick = { onSetAllModels(false) },
+                    tint = t.mut,
+                    fontSize = 12.0,
+                )
             }
-            if (order.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                order.take(3).forEachIndexed { index, row ->
+            // Ordered by the router's own score, best first, so the list
+            // reads the same way the chain does.
+            row.models.forEach { model ->
+                ModelLine(
+                    model = model,
+                    onToggle = { onToggleModel(model.spec.key, it) },
+                    onClearCooldown = { onClearCooldown(model.spec.modelId) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelLine(model: ModelRow, onToggle: (Boolean) -> Unit, onClearCooldown: () -> Unit) {
+    val t = LocalTokens.current
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.Bottom) {
                     Text(
-                        "${index + 1}. ${row.displayName}  ·  ${row.platform}",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        model.spec.displayName,
+                        color = t.ink,
+                        style = rk(400, 13.0, 1.3),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
+                    // The score only exists for a model the router would consider,
+                    // so its absence is information too.
+                    model.score?.let {
+                        Spacer(Modifier.width(8.dp))
+                        MonoText(it.fmt(3), size = 10.5, tint = t.accLt)
+                    }
                 }
-                if (order.size > 3) {
-                    Text(
-                        "+ ${order.size - 3} more",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                val detail = buildString {
+                    append(model.spec.sizeLabel)
+                    model.spec.contextWindow?.let { append(" · ${it / 1024}k ctx") }
+                    if (!model.spec.supportsTools) append(" · no tools")
+                    model.health?.let { h ->
+                        if (h.successes + h.failures > 0) {
+                            val rate = h.successes / (h.successes + h.failures)
+                            append(" · ${(rate * 100).fmt(0)}% ok")
+                        }
+                        if (h.tokensPerSecond > 0) append(" · ${h.tokensPerSecond.fmt(0)} tok/s")
+                    }
+                    model.utilization?.let { append(" · ${(it * 100).fmt(0)}% quota used") }
+                }
+                MonoText(detail, Modifier.padding(top = 3.dp), size = 10.5)
+                if (model.cooldownRemainingMs > 0) {
+                    Row(
+                        Modifier.padding(top = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val badge = RoundedCornerShape(7.dp)
+                        Row(
+                            Modifier
+                                .clip(badge)
+                                .background(t.errSoft)
+                                .border(1.dp, t.err.copy(alpha = 0.3f), badge)
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            PhIcon(Ph.SNOWFLAKE, 10.0, t.err)
+                            Spacer(Modifier.width(5.dp))
+                            MonoText(
+                                "cooling down ${model.cooldownRemainingMs / 1000}s",
+                                size = 10.5,
+                                tint = t.err,
+                            )
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        RkTextAction(
+                            "Clear",
+                            onClick = onClearCooldown,
+                            tint = t.mut,
+                            fontSize = 11.5,
+                        )
+                    }
                 }
             }
+            Spacer(Modifier.width(11.dp))
+            RkSwitch(checked = model.spec.enabled, onChange = onToggle)
+        }
+        GlassDivider()
+    }
+}
+
+@Composable
+private fun UsageCard(rows: List<io.reyaak.core.data.UsageRow>) {
+    val t = LocalTokens.current
+    Glass(radius = 18.dp, padding = PaddingValues(horizontal = 15.dp, vertical = 6.dp)) {
+        val shown = rows.take(10)
+        shown.forEachIndexed { index, row ->
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MonoText(
+                    "${row.platform} · ${row.modelId?.substringAfterLast('/') ?: "?"}",
+                    Modifier.weight(1f),
+                    size = 11.5,
+                    tint = t.ink,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.width(10.dp))
+                MonoText(
+                    "${row.turns} turns · ${row.totalTokens} tok · ${row.avgLatencyMs.toInt()}ms",
+                    size = 10.5,
+                )
+            }
+            if (index < shown.lastIndex) GlassDivider()
+        }
+        // The list is capped, so say so rather than truncating in silence.
+        if (rows.size > 10) {
+            GlassDivider()
+            MonoText(
+                "…and ${rows.size - 10} more",
+                Modifier.padding(vertical = 12.dp),
+                size = 10.5,
+                tint = t.faint,
+            )
         }
     }
 }
@@ -371,11 +735,14 @@ private fun OrderEditorDialog(
     onMove: (String, Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val t = LocalTokens.current
     val haptics = LocalHapticFeedback.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Chain order") },
+        containerColor = t.sheet,
+        shape = RoundedCornerShape(24.dp),
+        title = { Text("Chain order", color = t.ink, style = rk(600, 18.0, 1.25)) },
         text = {
             LazyColumn(Modifier.heightIn(max = 420.dp)) {
                 itemsIndexed(order, key = { _, row -> row.modelKey }) { index, row ->
@@ -383,386 +750,53 @@ private fun OrderEditorDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .animateItem()
-                            .padding(vertical = 2.dp),
+                            .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            "${index + 1}".padStart(2),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.width(8.dp))
+                        MonoText("${index + 1}".padStart(2), size = 11.0, tint = t.faint)
+                        Spacer(Modifier.width(9.dp))
                         Column(Modifier.weight(1f)) {
                             Text(
                                 row.displayName,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
+                                color = t.ink,
+                                style = rk(400, 13.5, 1.2),
                                 maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
-                            Text(
-                                row.platform,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            MonoText(row.platform, size = 10.5, tint = t.faint, maxLines = 1)
                         }
-                        TextButton(
-                            onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onMove(row.modelKey, -1)
-                            },
-                            enabled = index > 0,
-                        ) { Text("↑") }
-                        TextButton(
-                            onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onMove(row.modelKey, 1)
-                            },
-                            enabled = index < order.lastIndex,
-                        ) { Text("↓") }
+                        MoveButton(Ph.ARROW_UP, index > 0) {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onMove(row.modelKey, -1)
+                        }
+                        MoveButton(Ph.ARROW_DOWN, index < order.lastIndex) {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onMove(row.modelKey, 1)
+                        }
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Done", color = t.accLt, style = rk(500, 13.5, 1.0))
+            }
+        },
     )
 }
 
-/** One chain row: rank, model, score, and a bar for the score at a glance. */
 @Composable
-private fun ChainLine(index: Int, row: ChainRow, fraction: Double) {
-    val leading = index == 0
-    val tint = if (leading) MaterialTheme.colorScheme.primary
-    else MaterialTheme.colorScheme.onSurfaceVariant
-    Column(Modifier.padding(vertical = 3.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "${index + 1}".padStart(2),
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    row.displayName,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = if (leading) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (leading) MaterialTheme.colorScheme.onSurface else tint,
-                    maxLines = 1,
-                )
-                Text(
-                    row.platform,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Text(
-                row.score.fmt(3),
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace,
-                color = tint,
-            )
-        }
-        // The bar animates so a score that moved after a turn reads as movement
-        // rather than as a different number in the same place.
-        val animated by animateFloatAsState(
-            targetValue = fraction.toFloat().coerceIn(0f, 1f),
-            label = "chainScore",
-        )
-        LinearProgressIndicator(
-            progress = { animated },
-            modifier = Modifier.fillMaxWidth().height(3.dp).padding(top = 3.dp),
-            color = tint,
-            trackColor = MaterialTheme.colorScheme.outline,
-        )
-    }
-}
-
-@Composable
-private fun ConfigCard(
-    onRestart: () -> Unit,
-    onImport: () -> Unit,
-    onExport: (Boolean) -> Unit,
-) {
-    var showExportChoice by remember { mutableStateOf(false) }
-
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(14.dp),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                "Import or export the router configuration. The format is the same " +
-                    "declarative config FreeLLMAPI uses, so files move between them.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            // Reload, unbench, and re-ask every provider what it serves. The
-            // same thing a fresh app start does, for when the answer changed
-            // while the app was open.
-            OutlinedButton(onClick = onRestart, modifier = Modifier.fillMaxWidth()) {
-                Text("Restart router")
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onImport, modifier = Modifier.weight(1f)) {
-                    Text("Import")
-                }
-                OutlinedButton(
-                    onClick = { showExportChoice = true },
-                    modifier = Modifier.weight(1f),
-                ) { Text("Export") }
-            }
-        }
-    }
-
-    if (showExportChoice) {
-        AlertDialog(
-            onDismissRequest = { showExportChoice = false },
-            title = { Text("Include API keys?") },
-            text = {
-                Text(
-                    "An export without keys describes your setup safely. " +
-                        "With keys it is a credential file, only for moving to another device."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showExportChoice = false
-                    onExport(false)
-                }) { Text("Without keys") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    showExportChoice = false
-                    onExport(true)
-                }) { Text("With keys") }
-            },
-        )
-    }
-}
-
-@Composable
-private fun ProviderCard(
-    row: ProviderRow,
-    onAddKey: () -> Unit,
-    onRemoveKey: (String) -> Unit,
-    onToggleKey: (String, Boolean) -> Unit,
-    onRefreshModels: () -> Unit,
-    onToggleModel: (String, Boolean) -> Unit,
-    onSetAllModels: (Boolean) -> Unit,
-    onClearCooldown: (String) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(14.dp),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = CircleShape,
-                    color = if (row.configured) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.outline,
-                    modifier = Modifier.size(8.dp),
-                ) {}
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        row.provider.label,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        "${row.models.count { it.spec.enabled }} of ${row.models.size} models enabled",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                TextButton(onClick = { expanded = !expanded }) {
-                    Text(if (expanded) "Hide" else "Manage")
-                }
-            }
-
-            if (expanded) {
-                Spacer(Modifier.height(8.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                Spacer(Modifier.height(12.dp))
-
-                Text(
-                    "Keys",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (row.keys.isEmpty()) {
-                    Text(
-                        "None yet.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    row.keys.forEach { key ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    key.label,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                                Text(
-                                    // Never render the secret, even masked in full:
-                                    // a shoulder-surfable prefix is enough to
-                                    // identify which key this is.
-                                    if (key.hasSecret) "•••• ${key.secret!!.takeLast(4)}"
-                                    else "no secret stored",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Switch(
-                                checked = key.enabled,
-                                onCheckedChange = { onToggleKey(key.label, it) },
-                            )
-                            TextButton(onClick = { onRemoveKey(key.label) }) { Text("Remove") }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onAddKey, modifier = Modifier.weight(1f)) {
-                        Text("Add key")
-                    }
-                    OutlinedButton(
-                        onClick = onRefreshModels,
-                        enabled = row.configured,
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Refresh models") }
-                }
-
-                Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "Models",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                    )
-                    // Bulk, because a provider that lists 300 ids makes
-                    // per-row tapping a chore rather than a choice.
-                    TextButton(onClick = { onSetAllModels(true) }) { Text("Enable all") }
-                    TextButton(onClick = { onSetAllModels(false) }) { Text("Disable all") }
-                }
-                // Ordered by the router's own score, best first, so the list
-                // reads the same way the chain does.
-                row.models.forEach { model ->
-                    ModelLine(
-                        model = model,
-                        onToggle = { onToggleModel(model.spec.key, it) },
-                        onClearCooldown = { onClearCooldown(model.spec.modelId) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ModelLine(model: ModelRow, onToggle: (Boolean) -> Unit, onClearCooldown: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    model.spec.displayName,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                // The score only exists for a model the router would consider,
-                // so its absence is information too.
-                model.score?.let {
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        it.fmt(3),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
-            }
-            val detail = buildString {
-                append(model.spec.sizeLabel)
-                model.spec.contextWindow?.let { append(" · ${it / 1024}k ctx") }
-                if (!model.spec.supportsTools) append(" · no tools")
-                model.health?.let { h ->
-                    if (h.successes + h.failures > 0) {
-                        val rate = h.successes / (h.successes + h.failures)
-                        append(" · ${(rate * 100).fmt(0)}% ok")
-                    }
-                    if (h.tokensPerSecond > 0) append(" · ${h.tokensPerSecond.fmt(0)} tok/s")
-                }
-                model.utilization?.let { append(" · ${(it * 100).fmt(0)}% quota used") }
-            }
-            Text(
-                detail,
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (model.cooldownRemainingMs > 0) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "cooling down ${model.cooldownRemainingMs / 1000}s",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    TextButton(onClick = onClearCooldown) { Text("Clear") }
-                }
-            }
-        }
-        Switch(checked = model.spec.enabled, onCheckedChange = onToggle)
-    }
-}
-
-@Composable
-private fun UsageCard(rows: List<io.reyaak.core.data.UsageRow>) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(14.dp),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            rows.take(10).forEach { row ->
-                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "${row.platform} · ${row.modelId?.substringAfterLast('/') ?: "?"}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                    Text(
-                        "${row.turns} turns · ${row.totalTokens} tok · ${row.avgLatencyMs.toInt()}ms",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-    }
+private fun MoveButton(glyph: String, enabled: Boolean, onClick: () -> Unit) {
+    val t = LocalTokens.current
+    val shape = RoundedCornerShape(10.dp)
+    Box(
+        Modifier
+            .size(32.dp)
+            .clip(shape)
+            .background(if (enabled) t.g1 else Color.Transparent)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { PhIcon(glyph, 14.0, if (enabled) t.ink else t.faint) }
 }
 
 @Composable
@@ -773,35 +807,32 @@ private fun AddKeyDialog(
     onSave: (String, String) -> Unit,
     onOpenConsole: (String) -> Unit,
 ) {
+    val t = LocalTokens.current
     var label by remember { mutableStateOf("default") }
     var secret by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add $platform key") },
+        containerColor = t.sheet,
+        shape = RoundedCornerShape(24.dp),
+        title = { Text("Add $platform key", color = t.ink, style = rk(600, 18.0, 1.25)) },
         text = {
-            Column {
-                OutlinedTextField(
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                RkLabelledField(
+                    label = "API key",
                     value = secret,
                     onValueChange = { secret = it },
-                    label = { Text("API key") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "sk-…",
                 )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
+                RkLabelledField(
+                    label = "Label",
                     value = label,
                     onValueChange = { label = it },
-                    label = { Text("Label") },
-                    supportingText = { Text("Add a second key with a different label for more free quota.") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "default",
                 )
+                FootNote("Add a second key with a different label for more free quota.")
                 if (!consoleUrl.isNullOrBlank()) {
-                    Spacer(Modifier.height(8.dp))
-                    TextButton(onClick = { onOpenConsole(consoleUrl) }) {
-                        Text("Get a key")
-                    }
+                    RkTextAction("Get a key", onClick = { onOpenConsole(consoleUrl) })
                 }
             }
         },
@@ -809,57 +840,12 @@ private fun AddKeyDialog(
             TextButton(
                 onClick = { onSave(label, secret) },
                 enabled = secret.isNotBlank(),
-            ) { Text("Save") }
+            ) { Text("Save", color = t.accLt, style = rk(500, 13.5, 1.0)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = t.mut, style = rk(500, 13.5, 1.0))
+            }
+        },
     )
-}
-
-@Composable
-private fun NoticeBanner(
-    text: String,
-    warnings: List<String>,
-    isError: Boolean,
-    onDismiss: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isError) MaterialTheme.colorScheme.errorContainer
-            else MaterialTheme.colorScheme.surfaceVariant,
-        ),
-        shape = RoundedCornerShape(12.dp),
-    ) {
-        Column(Modifier.padding(14.dp)) {
-            Text(
-                text,
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (isError) MaterialTheme.colorScheme.onErrorContainer
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (warnings.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
-                // Warnings are shown rather than counted: an import that silently
-                // skipped a key the user needs is worse than a noisy banner.
-                warnings.take(6).forEach {
-                    Text(
-                        "• $it",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (warnings.size > 6) {
-                    Text(
-                        "…and ${warnings.size - 6} more",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
-                Text("Dismiss")
-            }
-        }
-    }
 }

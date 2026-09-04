@@ -1,5 +1,6 @@
 package io.reyaak
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -11,25 +12,36 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,34 +49,56 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.reyaak.core.ReyaakCore
 import io.reyaak.runtime.AgentService
 import io.reyaak.ui.AboutScreen
 import io.reyaak.ui.AgentScreen
 import io.reyaak.ui.ChatScreen
+import io.reyaak.ui.Confirmation
+import io.reyaak.ui.ConfirmSheet
+import io.reyaak.ui.GlassDivider
 import io.reyaak.ui.HistoryScreen
+import io.reyaak.ui.LocalBrand
+import io.reyaak.ui.LocalFeedback
+import io.reyaak.ui.LocalTokens
+import io.reyaak.ui.NavBarSpace
 import io.reyaak.ui.NavDestination
+import io.reyaak.ui.Ph
+import io.reyaak.ui.PhIcon
 import io.reyaak.ui.PlaygroundScreen
+import io.reyaak.ui.ReyaakBrand
+import io.reyaak.ui.ReyaakFeedback
+import io.reyaak.ui.ReyaakFonts
 import io.reyaak.ui.ReyaakNavBar
 import io.reyaak.ui.ReyaakTheme
+import io.reyaak.ui.RkToast
 import io.reyaak.ui.RouterScreen
 import io.reyaak.ui.SettingsScreen
+import io.reyaak.ui.needsNotificationPermission
+import io.reyaak.ui.notificationsEnabled
+import io.reyaak.ui.reyaakBackground
+import io.reyaak.ui.rk
 import io.reyaak.vm.ChatViewModel
 import io.reyaak.vm.RouterViewModel
 
 private enum class Tab(val label: String, val glyph: String) {
-    CHAT("Chat", "◆"),
-    ROUTER("Router", "⇄"),
-    AGENT("Agent", "◉"),
-    SETTINGS("Settings", "⚙"),
+    CHAT("Chat", Ph.CHAT),
+    ROUTER("Router", Ph.SHUFFLE),
+    AGENT("Agent", Ph.PULSE),
+    SETTINGS("Settings", Ph.GEAR),
 }
 
 /**
@@ -98,8 +132,26 @@ class MainActivity : ComponentActivity() {
         setContent {
             var dark by rememberSaveable { mutableStateOf(prefs.getBoolean(KEY_DARK, true)) }
 
-            ReyaakTheme(darkTheme = dark) {
-                Surface(color = MaterialTheme.colorScheme.background) {
+            // The families :ui asks the host for. Loaded once here rather than
+            // per screen, because a FontFamily that is rebuilt on recomposition
+            // re-resolves every glyph.
+            val fonts = remember {
+                ReyaakFonts(
+                    sans = FontFamily(
+                        Font(R.font.manrope_regular, FontWeight.Normal),
+                        Font(R.font.manrope_medium, FontWeight.Medium),
+                        Font(R.font.manrope_semibold, FontWeight.SemiBold),
+                        Font(R.font.manrope_bold, FontWeight.Bold),
+                    ),
+                    mono = FontFamily.Monospace,
+                    icons = FontFamily(Font(R.font.phosphor)),
+                    iconsFill = FontFamily(Font(R.font.phosphor_fill)),
+                )
+            }
+            val brand = ReyaakBrand(icon = painterResource(R.drawable.reyaak_icon))
+
+            ReyaakTheme(darkTheme = dark, fonts = fonts) {
+                CompositionLocalProvider(LocalBrand provides brand) {
                     ReyaakShell(
                         core = core,
                         darkTheme = dark,
@@ -120,14 +172,15 @@ private fun ReyaakShell(
     darkTheme: Boolean,
     onToggleTheme: (Boolean) -> Unit,
 ) {
+    val tokens = LocalTokens.current
     var tab by rememberSaveable { mutableStateOf(Tab.CHAT) }
     var page by rememberSaveable { mutableStateOf<Page?>(null) }
     var cli by rememberSaveable { mutableStateOf(false) }
-    val haptics = LocalHapticFeedback.current
 
     val factory = remember(core) { coreViewModelFactory(core) }
     val chatVm: ChatViewModel = viewModel(factory = factory)
     val routerVm: RouterViewModel = viewModel(factory = factory)
+    val conversations by chatVm.history.collectAsStateWithLifecycle()
 
     // A pushed page is what back means here; without this the system back would
     // leave the app from a subpage.
@@ -140,6 +193,19 @@ private fun ReyaakShell(
                 Intent(Intent.ACTION_VIEW, Uri.parse(url))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
+        }
+    }
+
+    // Starting the agent needs a permission on API 33+, and it is now reachable
+    // from two places, so the launcher lives here rather than in either of them.
+    val askNotifications = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { AgentService.start(context) }
+    val startAgent: () -> Unit = {
+        if (needsNotificationPermission(notificationsEnabled(context))) {
+            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            AgentService.start(context)
         }
     }
 
@@ -169,97 +235,55 @@ private fun ReyaakShell(
         }
     }
 
+    // The app's one feedback channel, hosted here because it draws over every
+    // screen and has to outlive the one that raised it.
+    var toast by remember { mutableStateOf<Toast?>(null) }
+    var confirmation by remember { mutableStateOf<Confirmation?>(null) }
+    val feedback = remember {
+        ReyaakFeedback(
+            toast = { text, isError, warnings -> toast = Toast(text, isError, warnings) },
+            confirm = { confirmation = it },
+        )
+    }
+    LaunchedEffect(toast) {
+        // Long enough to read a sentence and a warning or two, short enough that
+        // it is gone before it becomes furniture.
+        if (toast != null) {
+            kotlinx.coroutines.delay(4200)
+            toast = null
+        }
+    }
+
     val destinations = remember {
         Tab.entries.map { NavDestination(it.name, it.label, it.glyph) }
     }
+    val systemNav = with(LocalDensity.current) {
+        WindowInsets.navigationBars.getBottom(this).toDp()
+    }
+    // Every scrolling screen reserves the floating bar itself, since the bar
+    // draws over content rather than displacing it.
+    val bottomPadding = NavBarSpace + systemNav
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        // The floating bar draws over the content, so the Scaffold must not
-        // reserve a strip for it: the screens pad for it themselves.
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = page?.title ?: if (tab == Tab.CHAT) "Reyaak" else tab.label,
-                        fontWeight = FontWeight.Bold,
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground,
-                ),
-                navigationIcon = {
-                    when {
-                        // Back out of a pushed page.
-                        page != null -> TextButton(onClick = { page = null }) {
-                            Text("←", fontWeight = FontWeight.Bold)
-                        }
-                        // Conversations, where the drawer handle lives in every
-                        // chat app: left of the title, one tap from the thread.
-                        tab == Tab.CHAT -> TextButton(
-                            onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                page = Page.HISTORY
-                            }
-                        ) { Text("☰", fontWeight = FontWeight.Bold) }
-                    }
-                },
-                // Chat-only actions: a fresh conversation, and the same
-                // conversation rendered as a terminal.
-                actions = {
-                    if (tab == Tab.CHAT && page == null) {
-                        TextButton(
-                            onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                chatVm.newConversation()
-                            }
-                        ) { Text("+", fontWeight = FontWeight.Bold) }
-                        TextButton(
-                            onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                cli = !cli
-                            }
-                        ) { Text(if (cli) "◆" else ">_", fontWeight = FontWeight.Bold) }
-                    }
-                },
-            )
-        },
-    ) { inner ->
-        Box(Modifier.fillMaxSize().padding(inner)) {
-            // A pushed page slides in from the right and back out again; tabs
-            // cross-fade, because they are siblings and a slide would imply an
-            // order they do not have.
-            AnimatedContent(
-                targetState = page to tab,
-                transitionSpec = {
-                    val pushing = initialState.first == null && targetState.first != null
-                    val popping = initialState.first != null && targetState.first == null
-                    when {
-                        pushing -> (slideInHorizontally(tween(260)) { it / 3 } + fadeIn(tween(200)))
-                            .togetherWith(fadeOut(tween(160)))
-                        popping -> fadeIn(tween(220)).togetherWith(
-                            slideOutHorizontally(tween(240)) { it / 3 } + fadeOut(tween(180))
-                        )
-                        else -> fadeIn(tween(200)).togetherWith(fadeOut(tween(160)))
-                    }
-                },
-                label = "shell",
-            ) { (currentPage, currentTab) ->
-                when (currentPage) {
-                    Page.HISTORY -> HistoryScreen(chatVm) { page = null }
-                    Page.ABOUT -> AboutScreen(
-                        version = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                        onOpenUrl = openUrl,
-                    )
-                    Page.PLAYGROUND -> PlaygroundScreen(core)
-                    null -> when (currentTab) {
+    CompositionLocalProvider(LocalFeedback provides feedback) {
+        Box(Modifier.fillMaxSize().reyaakBackground(tokens)) {
+            Box(Modifier.fillMaxSize().statusBarsPadding()) {
+                // A pushed page slides in from the right and back out again; tabs
+                // cross-fade, because they are siblings and a slide would imply an
+                // order they do not have.
+                AnimatedContent(
+                    targetState = tab,
+                    transitionSpec = { fadeIn(tween(200)).togetherWith(fadeOut(tween(160))) },
+                    label = "tabs",
+                ) { currentTab ->
+                    when (currentTab) {
                         Tab.CHAT -> ChatScreen(
                             vm = chatVm,
-                            onOpenRouter = { tab = Tab.ROUTER },
+                            onOpenRouter = { tab = Tab.ROUTER; routerVm.refresh() },
                             onOpenAgent = { tab = Tab.AGENT },
+                            onStartAgent = startAgent,
+                            onOpenHistory = { page = Page.HISTORY },
                             cli = cli,
+                            onToggleCli = { cli = !cli },
                         )
                         Tab.ROUTER -> RouterScreen(
                             vm = routerVm,
@@ -272,22 +296,34 @@ private fun ReyaakShell(
                                 pendingSave = content to onSaved
                                 saver.launch(fileName)
                             },
+                            bottomPadding = bottomPadding,
                         )
-                        Tab.AGENT -> AgentScreen(core, onOpenUrl = openUrl)
+                        Tab.AGENT -> AgentScreen(
+                            core = core,
+                            onOpenUrl = openUrl,
+                            onStartAgent = startAgent,
+                            bottomPadding = bottomPadding,
+                        )
                         Tab.SETTINGS -> SettingsScreen(
                             core = core,
                             darkTheme = darkTheme,
                             onToggleTheme = onToggleTheme,
                             onOpenAbout = { page = Page.ABOUT },
                             onOpenPlayground = { page = Page.PLAYGROUND },
+                            onOpenHistory = { page = Page.HISTORY },
+                            version = BuildConfig.VERSION_NAME,
+                            conversationCount = conversations.size,
+                            bottomPadding = bottomPadding,
                         )
                     }
                 }
             }
 
-            // The bar would otherwise sit behind the keyboard, holding a strip
-            // of dead space above the composer for something nobody can see.
-            if (WindowInsets.ime.getBottom(LocalDensity.current) == 0) ReyaakNavBar(
+            // The floating bar draws over the content and is hidden while the
+            // keyboard is up, so it never holds a strip of dead space above the
+            // composer for something nobody can see.
+            val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+            if (page == null && !keyboardOpen) ReyaakNavBar(
                 destinations = destinations,
                 selectedId = tab.name,
                 onSelect = { id ->
@@ -302,7 +338,98 @@ private fun ReyaakShell(
                 },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
+
+            AnimatedVisibility(
+                visible = page != null,
+                enter = slideInHorizontally(tween(260)) { it / 3 } + fadeIn(tween(200)),
+                exit = slideOutHorizontally(tween(240)) { it / 3 } + fadeOut(tween(180)),
+            ) {
+                PushedPage(
+                    title = page?.title.orEmpty(),
+                    onClose = { page = null },
+                ) {
+                    when (page) {
+                        Page.HISTORY -> HistoryScreen(chatVm) { page = null; tab = Tab.CHAT }
+                        Page.ABOUT -> AboutScreen(
+                            version = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                            onOpenUrl = openUrl,
+                        )
+                        Page.PLAYGROUND -> PlaygroundScreen(core)
+                        null -> Unit
+                    }
+                }
+            }
+
+            AnimatedVisibility(
+                visible = toast != null,
+                enter = slideInVertically(tween(260)) { it / 3 } + fadeIn(tween(260)),
+                exit = fadeOut(tween(180)),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(start = 16.dp, end = 16.dp, bottom = bottomPadding),
+            ) {
+                toast?.let { current ->
+                    RkToast(
+                        text = current.text,
+                        warnings = current.warnings,
+                        isError = current.isError,
+                        onDismiss = { toast = null },
+                    )
+                }
+            }
+
+            confirmation?.let { current ->
+                ConfirmSheet(current) { confirmation = null }
+            }
         }
+    }
+}
+
+/** One transient message. Kept as a value so a repeat of the same text re-shows. */
+private data class Toast(
+    val text: String,
+    val isError: Boolean,
+    val warnings: List<String>,
+)
+
+/**
+ * The chrome for a page pushed over a tab.
+ *
+ * There is no shared app bar any more: three of the four tabs open with their
+ * own large title and no actions, so a bar across all of them was a mostly empty
+ * strip. A pushed page still needs one, because back has to live somewhere.
+ */
+@Composable
+private fun PushedPage(
+    title: String,
+    onClose: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val t = LocalTokens.current
+    Column(Modifier.fillMaxSize().background(t.bg)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(t.g1)
+                .statusBarsPadding()
+                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val shape = RoundedCornerShape(13.dp)
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(shape)
+                    .background(t.g1)
+                    .border(1.dp, t.line, shape)
+                    .clickable(onClick = onClose),
+                contentAlignment = Alignment.Center,
+            ) { PhIcon(Ph.ARROW_LEFT, 17.0, t.ink) }
+            Spacer(Modifier.width(10.dp))
+            Text(title, color = t.ink, style = rk(600, 16.0, 1.0, tracking = (-0.01).em))
+        }
+        GlassDivider()
+        Box(Modifier.fillMaxSize()) { content() }
     }
 }
 

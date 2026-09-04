@@ -29,8 +29,14 @@ interface AgentTool {
     /** JSON Schema for the arguments object. */
     val parameters: String
 
-    /** True when this tool cannot run until the user supplies a credential. */
-    val needsKey: Boolean get() = false
+    /**
+     * True when this tool can actually run right now.
+     *
+     * Per tool rather than one registry-wide credential check: the web tools
+     * need nothing, and Gmail needs a signed-in account that means nothing to
+     * them.
+     */
+    fun ready(config: ToolConfig): Boolean = true
 
     /** @return text for the model. Throwing is fine: the caller reports it. */
     suspend fun run(argumentsJson: String, config: ToolConfig): String
@@ -52,6 +58,27 @@ data class ToolConfig(
     val crwApiKey: String = "",
     /** Override for a self-hosted crw, which needs no key at all. */
     val crwBaseUrl: String = "",
+    /**
+     * The Gmail address the user connected, or blank.
+     *
+     * The address, not a token: Play Services hands out a fresh access token on
+     * demand once the scope is granted, so storing one would be caching
+     * something that expires in an hour. This is what "signed in" means here,
+     * and what the card shows.
+     */
+    val gmailAccount: String = "",
+    /** Mailbox address for the IMAP tool. Doubles as the username: they match everywhere. */
+    val imapUser: String = "",
+    /**
+     * App password for [imapUser]. A credential, hence the encrypted file.
+     *
+     * An app password rather than the account password because every provider
+     * that still allows IMAP at all issues one, and a revoked app password
+     * costs the user nothing.
+     */
+    val imapPassword: String = "",
+    /** Server override. Blank means it is derived from the address; see [imapServer]. */
+    val imapHost: String = "",
 ) {
     fun isEnabled(name: String) = name in enabled
 
@@ -103,7 +130,7 @@ class ToolRegistry(
     }
 
     fun usable(tool: AgentTool, cfg: ToolConfig = _config.value): Boolean =
-        cfg.isEnabled(tool.name) && (!tool.needsKey || hasCredential(cfg))
+        cfg.isEnabled(tool.name) && tool.ready(cfg)
 
     /**
      * Run one call from the model.
@@ -122,8 +149,6 @@ class ToolRegistry(
             "The tool ${call.name} failed: ${e.message?.take(300) ?: "unknown error"}"
         }
     }
-
-    private fun hasCredential(cfg: ToolConfig) = cfg.usesCrw
 
     private companion object {
         val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }

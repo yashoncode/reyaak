@@ -20,8 +20,11 @@ import io.ktor.http.isSuccess
  * HTML stripped by pattern rather than parsed. Point the tools at a crw and
  * every one of those gets better. The point of this backend is that the agent
  * can search on a fresh install.
+ *
+ * Public for one member only: [htmlToText] is also what turns an HTML-only
+ * email into something a model can read, and two strippers would drift.
  */
-internal object BuiltinWeb {
+object BuiltinWeb {
 
     /**
      * DuckDuckGo's no-JS endpoint. Chosen because it needs no key and no
@@ -149,7 +152,7 @@ internal object BuiltinWeb {
      * prose, which does not need a DOM. Block ends become newlines so
      * paragraphs survive; everything else is dropped.
      */
-    internal fun htmlToText(html: String): String {
+    fun htmlToText(html: String): String {
         val title = Regex("""<title[^>]*>(.*?)</title>""", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
             .find(html)?.groupValues?.get(1)?.let { strip(it) }
 

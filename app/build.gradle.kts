@@ -86,7 +86,26 @@ android {
     }
 
     packaging {
-        resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "META-INF/DEPENDENCIES")
+        resources.excludes += setOf(
+            "/META-INF/{AL2.0,LGPL2.1}",
+            "META-INF/DEPENDENCIES",
+            // Both JavaMail artifacts carry these. Attribution for them lives
+            // in the NOTICE file at the repo root, not in the APK.
+            "META-INF/NOTICE.md",
+            "META-INF/LICENSE.md",
+        )
+        // Merged, never picked: JavaMail finds its IMAP provider by reading
+        // these, and taking one jar's copy over the other's is how you get a
+        // "no provider for imaps" at runtime that compiles perfectly.
+        resources.merges += setOf(
+            "META-INF/javamail.providers",
+            "META-INF/javamail.default.providers",
+            "META-INF/javamail.address.map",
+            "META-INF/javamail.default.address.map",
+            "META-INF/mailcap",
+            "META-INF/mailcap.default",
+            "META-INF/mimetypes.default",
+        )
     }
 }
 
@@ -98,6 +117,12 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.kotlinx.coroutines.android)
+    // Gmail sign-in. Android-only, so it stops at this module.
+    implementation(libs.play.services.auth)
+    // IMAP. Also Android-only, and the reason the mail tool is built here
+    // rather than in :core.
+    implementation(libs.android.mail)
+    implementation(libs.android.activation)
 
     testImplementation(libs.junit)
 }

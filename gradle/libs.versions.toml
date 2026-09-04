@@ -20,6 +20,13 @@ sqlite = "2.6.2"
 lifecycle = "2.11.0"
 coreKtx = "1.19.0"
 activityCompose = "1.13.0"
+# Google sign-in for the Gmail tool. The Authorization API only: no Play
+# Services dependency reaches shared code, and nothing else here needs GMS.
+playServicesAuth = "21.4.0"
+# The Android port of JavaMail, for the IMAP tool. The official port rather
+# than Jakarta Mail proper: the latter reaches for java.beans and java.awt
+# classes Android does not have.
+androidMail = "1.6.7"
 junit = "4.13.2"
 
 [libraries]
@@ -52,6 +59,11 @@ compose-material3 = { module = "org.jetbrains.compose.material3:material3", vers
 
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+
+play-services-auth = { module = "com.google.android.gms:play-services-auth", version.ref = "playServicesAuth" }
+
+android-mail = { module = "com.sun.mail:android-mail", version.ref = "androidMail" }
+android-activation = { module = "com.sun.mail:android-activation", version.ref = "androidMail" }
 
 junit = { module = "junit:junit", version.ref = "junit" }
 

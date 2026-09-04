@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +39,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
@@ -53,7 +55,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.reyaak.core.ReyaakCore
+import io.reyaak.data.GoogleAuth
 import io.reyaak.runtime.AgentService
+import kotlinx.coroutines.launch
 
 @Composable
 fun AgentScreen(core: ReyaakCore, onOpenUrl: (String) -> Unit = {}) {
@@ -61,6 +65,21 @@ fun AgentScreen(core: ReyaakCore, onOpenUrl: (String) -> Unit = {}) {
     val state by core.agent.state.collectAsState()
     val haptics = LocalHapticFeedback.current
     var showLegend by remember { mutableStateOf(false) }
+
+    val scope = rememberCoroutineScope()
+
+    // Gmail sign-in. The token is asked for silently first; Play Services only
+    // shows a consent screen the first time, or after the user revokes it, and
+    // that screen is an Activity result like any other.
+    val googleAuth = remember(context) { GoogleAuth(context) }
+    var pendingGmail by remember { mutableStateOf<((String?) -> Unit)?>(null) }
+    val gmailConsent = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val onToken = pendingGmail
+        pendingGmail = null
+        onToken?.invoke(googleAuth.tokenFrom(result.data))
+    }
 
     var notificationsAllowed by remember { mutableStateOf(notificationsEnabled(context)) }
     var batteryExempt by remember { mutableStateOf(isBatteryExempt(context)) }
@@ -197,7 +216,27 @@ fun AgentScreen(core: ReyaakCore, onOpenUrl: (String) -> Unit = {}) {
 
         item { SkillsCard(core) }
 
-        item { ToolsCard(core = core, onOpenUrl = onOpenUrl) }
+        item {
+            ToolsCard(
+                core = core,
+                onOpenUrl = onOpenUrl,
+                onGmailSignIn = { onToken ->
+                    scope.launch {
+                        val result = googleAuth.authorize()
+                        val consent = result?.pendingIntent
+                        when {
+                            result == null -> onToken(null)
+                            consent != null -> {
+                                pendingGmail = onToken
+                                gmailConsent.launch(IntentSenderRequest.Builder(consent).build())
+                            }
+                            // Already granted: no screen, just a fresh token.
+                            else -> onToken(result.accessToken)
+                        }
+                    }
+                },
+            )
+        }
 
         item {
             Text(

@@ -9,6 +9,7 @@ import io.reyaak.router.catalog.ModelSpec
 import io.reyaak.core.llm.LLMClient
 import io.reyaak.core.persona.PersonaStore
 import io.reyaak.core.skills.SkillStore
+import io.reyaak.core.tools.AgentTool
 import io.reyaak.core.tools.ToolRegistry
 import io.reyaak.core.tools.WebReadTool
 import io.reyaak.core.tools.WebSearchTool
@@ -134,6 +135,10 @@ class ReyaakCore private constructor(
          *   database file is the one thing only the OS knows how to do.
          * @param persistence where router config (including API keys) is
          *   stored. Also the host's job, so this module stays free of Keystore.
+         * @param extraTools tools only one platform can offer, built by the
+         *   host: Gmail needs Play Services, IMAP needs a JVM mail library.
+         *   Passing them in rather than declaring them here is what keeps a
+         *   switch off the Agent screen for something the platform cannot run.
          *
          * Not synchronized: both hosts call this from their single-threaded
          * application entry point before any UI exists.
@@ -144,12 +149,14 @@ class ReyaakCore private constructor(
             personaPersistence: ConfigPersistence,
             toolPersistence: ConfigPersistence,
             skillPersistence: ConfigPersistence,
+            extraTools: List<AgentTool> = emptyList(),
         ): ReyaakCore = instance ?: build(
             databaseBuilder,
             persistence,
             personaPersistence,
             toolPersistence,
             skillPersistence,
+            extraTools,
         ).also { instance = it }
 
         private fun build(
@@ -158,6 +165,7 @@ class ReyaakCore private constructor(
             personaPersistence: ConfigPersistence,
             toolPersistence: ConfigPersistence,
             skillPersistence: ConfigPersistence,
+            extraTools: List<AgentTool>,
         ): ReyaakCore {
             val configStore = RouterConfigStore(persistence)
             val health = HealthStore()
@@ -173,7 +181,7 @@ class ReyaakCore private constructor(
             // them the agent may use, which lives in the registry config.
             val skills = SkillStore(skillPersistence)
             val tools = ToolRegistry(
-                tools = listOf(WebSearchTool(), WebReadTool()),
+                tools = listOf(WebSearchTool(), WebReadTool()) + extraTools,
                 persistence = toolPersistence,
             )
             // The bundled driver is set here rather than by each host, so

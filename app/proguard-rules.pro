@@ -54,3 +54,16 @@
 
 # ── Compose / Kotlin metadata ───────────────────────────────────────────────
 -dontwarn kotlinx.coroutines.debug.**
+
+# ── JavaMail (IMAP) ─────────────────────────────────────────────────────────
+# Providers are discovered by reading META-INF/javamail.* and reflecting on the
+# class names found there, so nothing references the IMAP store statically.
+-keep class com.sun.mail.** { *; }
+-keep class javax.mail.** { *; }
+-keep class javax.activation.** { *; }
+-keep class myjava.awt.datatransfer.** { *; }
+# Written against desktop Java, so it names classes Android does not ship. The
+# code paths that touch them are the ones this app never calls.
+-dontwarn java.awt.**
+-dontwarn javax.security.**
+-dontwarn com.sun.**

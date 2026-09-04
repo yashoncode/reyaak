@@ -98,8 +98,7 @@ class WebSearchTool : AgentTool {
             "current, or any fact you are not certain of."
     override val parameters = SEARCH_SCHEMA.trim()
     // Works with no configuration at all: without a crw it falls back to the
-    // built-in backend, so switching the tool on is enough.
-    override val needsKey = false
+    // built-in backend, so switching the tool on is enough: ready() stays true.
 
     override suspend fun run(argumentsJson: String, config: ToolConfig): String {
         val args = Crw.json.parseToJsonElement(argumentsJson).jsonObject
@@ -153,7 +152,6 @@ class WebReadTool : AgentTool {
         "Fetch one web page and return its readable content as markdown. Use " +
             "after a search, or when the user gives you a URL."
     override val parameters = SCRAPE_SCHEMA.trim()
-    override val needsKey = false
 
     override suspend fun run(argumentsJson: String, config: ToolConfig): String {
         val args = Crw.json.parseToJsonElement(argumentsJson).jsonObject

@@ -5,6 +5,9 @@ import androidx.room.Room
 import io.reyaak.core.data.ReyaakDatabase
 import io.reyaak.core.ReyaakCore
 import io.reyaak.data.FilePersistence
+import io.reyaak.core.tools.GmailReadTool
+import io.reyaak.data.GoogleAuth
+import io.reyaak.data.ImapReadTool
 import io.reyaak.data.KeystoreConfigPersistence
 import io.reyaak.runtime.AgentService
 import kotlinx.coroutines.CoroutineScope
@@ -39,6 +42,16 @@ class ReyaakApp : Application() {
             ),
             // Skills are instructions, not credentials, so a plain file.
             skillPersistence = FilePersistence(this, "skills.json"),
+            // The two mail tools are built here because both need something
+            // Android-only: Play Services for the Google sign-in, JavaMail for
+            // IMAP. Two paths to the same mailbox on purpose. IMAP is the one
+            // that needs nothing registered anywhere, so it reaches every
+            // provider; the Google one is there for people who would rather tap
+            // Sign in than find an app password.
+            extraTools = listOf(
+                GmailReadTool(GoogleAuth(this)),
+                ImapReadTool(),
+            ),
         )
         AgentService.ensureChannel(this)
 

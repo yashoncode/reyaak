@@ -17,8 +17,9 @@ class ToolRegistryTest {
 
     private class FakeTool(
         override val name: String,
-        override val needsKey: Boolean = false,
+        private val needsKey: Boolean = false,
     ) : AgentTool {
+        override fun ready(config: ToolConfig) = !needsKey || config.usesCrw
         var ran = false
         override val label = name
         override val description = "fake"

@@ -14,6 +14,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,6 +31,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.reyaak.core.ReyaakCore
+import io.reyaak.core.tools.Gmail
+import io.reyaak.core.tools.guessImapHost
+import io.reyaak.core.tools.imapNeedsBridge
+import io.reyaak.core.tools.imapServer
 import kotlinx.coroutines.launch
 
 /**
@@ -40,10 +45,25 @@ import kotlinx.coroutines.launch
  * to say so, which is why the switches and the backend live in one card.
  */
 @Composable
-fun ToolsCard(core: ReyaakCore, onOpenUrl: (String) -> Unit) {
+fun ToolsCard(
+    core: ReyaakCore,
+    onOpenUrl: (String) -> Unit,
+    /**
+     * Ask the OS for a Gmail access token, consent screen and all, and hand
+     * back the token or null. A lambda for the same reason file picking is one:
+     * sign-in is an Activity result, and this module has no Activity.
+     */
+    onGmailSignIn: ((String?) -> Unit) -> Unit = {},
+) {
     val scope = rememberCoroutineScope()
     val config by core.tools.config.collectAsStateWithLifecycle()
     var showKey by remember { mutableStateOf(false) }
+    var gmailBusy by remember { mutableStateOf(false) }
+    var gmailError by remember { mutableStateOf<String?>(null) }
+    var showImap by remember { mutableStateOf(false) }
+    var userDraft by remember(config.imapUser) { mutableStateOf(config.imapUser) }
+    var passDraft by remember(config.imapPassword) { mutableStateOf(config.imapPassword) }
+    var hostDraft by remember(config.imapHost) { mutableStateOf(config.imapHost) }
     var keyDraft by remember(config.crwApiKey) { mutableStateOf(config.crwApiKey) }
     var urlDraft by remember(config.crwBaseUrl) { mutableStateOf(config.crwBaseUrl) }
 
@@ -87,10 +107,13 @@ fun ToolsCard(core: ReyaakCore, onOpenUrl: (String) -> Unit) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
+                            // Readiness is the tool's own business now, so the
+                            // line says which of the two states it is in and
+                            // leaves the backend to the sections below.
                             when {
-                                !usable -> "Off"
-                                config.usesCrw -> "Active, via crw"
-                                else -> "Active, built-in backend"
+                                usable -> "Active"
+                                !on -> "Off"
+                                else -> "On, but not connected yet"
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -181,8 +204,183 @@ fun ToolsCard(core: ReyaakCore, onOpenUrl: (String) -> Unit) {
                     )
                 }
             }
+
+            if (core.tools.all.any { it.name == GMAIL_TOOL }) {
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                Spacer(Modifier.height(8.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Gmail account",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            gmailError
+                                ?: config.gmailAccount.ifBlank {
+                                    "Not connected. Sign in to let the agent read your " +
+                                        "mail. Read-only: it can never send or delete."
+                                },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (gmailError != null) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (config.gmailAccount.isNotBlank()) {
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    core.tools.update { it.copy(gmailAccount = "") }
+                                    gmailError = null
+                                }
+                            },
+                        ) { Text("Disconnect") }
+                    } else {
+                        TextButton(
+                            enabled = !gmailBusy,
+                            onClick = {
+                                gmailBusy = true
+                                gmailError = null
+                                onGmailSignIn { token ->
+                                    scope.launch {
+                                        gmailBusy = false
+                                        // The address is fetched rather than
+                                        // asked for: it proves the grant works,
+                                        // and it is the only thing worth storing.
+                                        val email = token?.let {
+                                            runCatching { Gmail.profileEmail(it) }.getOrDefault("")
+                                        }.orEmpty()
+                                        if (email.isBlank()) {
+                                            gmailError = "Sign-in did not complete."
+                                        } else {
+                                            // Connecting is the whole intent, so
+                                            // the switch follows rather than
+                                            // leaving a connected-but-off state.
+                                            core.tools.update {
+                                                it.copy(
+                                                    gmailAccount = email,
+                                                    enabled = it.enabled + GMAIL_TOOL,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                        ) { Text(if (gmailBusy) "Signing in…" else "Sign in") }
+                    }
+                }
+            }
+
+            if (core.tools.all.any { it.name == IMAP_TOOL }) {
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                Spacer(Modifier.height(8.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Mailbox (IMAP)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            when {
+                                config.imapNeedsBridge ->
+                                    "That provider only serves IMAP through a desktop " +
+                                        "bridge, which a phone cannot reach."
+                                config.imapUser.isBlank() ->
+                                    "Not set. An address and an app password reach " +
+                                        "Outlook, Yahoo, Zoho, Fastmail, a work server, " +
+                                        "or Gmail, with nothing to register."
+                                else -> "${config.imapUser} via ${config.imapServer}"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (config.imapNeedsBridge) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(onClick = { showImap = !showImap }) {
+                        Text(if (showImap) "Hide" else "Configure")
+                    }
+                }
+
+                AnimatedVisibility(visible = showImap) {
+                    Column {
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = userDraft,
+                            onValueChange = { userDraft = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Email address") },
+                            placeholder = { Text("you@example.com") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = passDraft,
+                            onValueChange = { passDraft = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("App password") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            shape = RoundedCornerShape(12.dp),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = hostDraft,
+                            onValueChange = { hostDraft = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("IMAP server (optional)") },
+                            // The guess for whatever has been typed so far, so
+                            // the field can stay empty for almost everyone.
+                            placeholder = {
+                                Text(guessImapHost(userDraft).ifBlank { "imap.example.com" })
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                        )
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    // Filling this in is the whole intent, so the
+                                    // switch follows rather than leaving a
+                                    // configured-but-off state.
+                                    core.tools.update {
+                                        it.copy(
+                                            imapUser = userDraft.trim(),
+                                            imapPassword = passDraft.trim(),
+                                            imapHost = hostDraft.trim(),
+                                            enabled = if (userDraft.isBlank()) it.enabled - IMAP_TOOL
+                                            else it.enabled + IMAP_TOOL,
+                                        )
+                                    }
+                                    showImap = false
+                                }
+                            },
+                            enabled = userDraft.trim() != config.imapUser ||
+                                passDraft.trim() != config.imapPassword ||
+                                hostDraft.trim() != config.imapHost,
+                        ) { Text("Save") }
+                        Text(
+                            "Port 993, TLS. Stored encrypted with the same " +
+                                "hardware-backed key as your provider keys. Most " +
+                                "providers want an app password rather than your " +
+                                "account password: make one in their security settings.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
         }
     }
 }
+
+private const val IMAP_TOOL = "mail_read"
+
+private const val GMAIL_TOOL = "gmail_read"
 
 private const val CRW_SIGNUP = "https://fastcrw.com/register"

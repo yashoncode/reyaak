@@ -39,6 +39,9 @@ class AgentService : Service() {
     /** The run state the whole app reads, including the chat gate. */
     private val agent by lazy { (application as ReyaakApp).core.agent }
 
+    /** Curated on idle, so the store does not grow without bound. */
+    private val memory by lazy { (application as ReyaakApp).core.memory }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var loop: Job? = null
 
@@ -74,8 +77,13 @@ class AgentService : Service() {
     }
 
     /**
-     * Phase 1 placeholder for the agent loop: a heartbeat that proves the
-     * process stays alive and keeps working while the app is backgrounded.
+     * The heartbeat, and the one thing the agent does unprompted.
+     *
+     * Maintenance is triggered by inactivity rather than by a schedule. A
+     * scheduling daemon would mean WorkManager, a second execution path, and a
+     * job that fires while the user is mid-sentence; a quiet stretch is both a
+     * better signal that now is a good time and something this loop already
+     * knows about.
      *
      * Uses [SystemClock.elapsedRealtime] for elapsed time because it keeps
      * counting through deep sleep, unlike uptimeMillis, and cannot jump when the
@@ -83,15 +91,54 @@ class AgentService : Service() {
      */
     private suspend fun runLoop() {
         val startedAt = SystemClock.elapsedRealtime()
+        var idleSince = startedAt
+        var turnsSeen = agent.state.value.turnsAnswered
+        // One pass per quiet stretch. Without this the curator would re-run
+        // every five seconds for as long as the phone sat on the table.
+        var curatedThisIdle = false
+
         // The current coroutine, not `scope`: cancelling the loop job alone must
         // end this loop, and scope.isActive would still be true in that case.
         while (currentCoroutineContext().isActive) {
             delay(TICK_INTERVAL_MS)
-            val alive = SystemClock.elapsedRealtime() - startedAt
+            val nowElapsed = SystemClock.elapsedRealtime()
+
+            val turns = agent.state.value.turnsAnswered
+            if (turns != turnsSeen) {
+                turnsSeen = turns
+                idleSince = nowElapsed
+                curatedThisIdle = false
+            }
+
+            val idleFor = nowElapsed - idleSince
+            if (!curatedThisIdle && idleFor >= MAINTENANCE_AFTER_MS) {
+                curatedThisIdle = true
+                curate()
+            }
+
+            val alive = nowElapsed - startedAt
             val activity = "Idle for ${formatElapsed(alive)}"
             agent.heartbeat(activity)
             notifyState(activity, agent.state.value.turnsAnswered)
         }
+    }
+
+    /**
+     * The cheap deterministic curation pass.
+     *
+     * Deliberately not the model-driven one: this runs unattended, so it does
+     * only what a SQL predicate can justify. Asking a model which memories are
+     * worth keeping costs a turn and can be wrong, which is why it stays an
+     * explicit action rather than something that happens while nobody is
+     * looking.
+     *
+     * Failures are swallowed on purpose. Maintenance is a nicety, and an
+     * exception here would take the heartbeat down with it, which is the one
+     * thing the loop exists to keep running.
+     */
+    private suspend fun curate() {
+        val archived = runCatching { memory.archiveStale() }.getOrNull().orEmpty()
+        if (archived.isNotEmpty()) agent.heartbeat("Archived ${archived.size} stale memories")
     }
 
     private fun stopAgent() {
@@ -157,6 +204,15 @@ class AgentService : Service() {
         const val ACTION_STOP = "io.reyaak.action.STOP"
 
         private const val TICK_INTERVAL_MS = 5_000L
+
+        /**
+         * How long a quiet stretch has to be before maintenance runs.
+         *
+         * Long enough that it never fires between two messages in one
+         * conversation, short enough that a phone left alone overnight gets
+         * tidied before morning.
+         */
+        private const val MAINTENANCE_AFTER_MS = 30 * 60 * 1000L
 
         fun ensureChannel(context: Context) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return

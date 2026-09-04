@@ -5,6 +5,8 @@ import io.reyaak.core.agent.AgentStatus
 import io.reyaak.core.data.ChatDao
 import io.reyaak.core.data.MessageEntity
 import io.reyaak.core.llm.LLMClient
+import io.reyaak.core.memory.MemoryStore
+import io.reyaak.core.memory.TurnScope
 import io.reyaak.core.persona.Persona
 import io.reyaak.core.skills.SkillStore
 import io.reyaak.core.tools.ToolRegistry
@@ -33,6 +35,9 @@ class ChatEngine(
     private val persona: () -> Persona = { Persona() },
     private val tools: ToolRegistry? = null,
     private val skills: SkillStore? = null,
+    private val memory: MemoryStore? = null,
+    /** Set per turn so a memory the agent writes records where it came from. */
+    private val turn: TurnScope? = null,
     private val now: () -> Long = ::epochMillis,
 ) {
 
@@ -80,6 +85,7 @@ class ChatEngine(
             dao.renameConversation(conversationId, userText.take(60).trim().ifBlank { "New conversation" })
         }
 
+        turn?.conversationId = conversationId
         val context = buildContext(history)
         val reply = StringBuilder()
         // Whether a terminal event already wrote the assistant row. Cancellation
@@ -174,7 +180,7 @@ class ChatEngine(
      * only sections are the system prompt and history; memory, the user profile,
      * and activated skills slot in ahead of history in phase 2.
      */
-    private fun buildContext(history: List<MessageEntity>): List<ChatMessage> {
+    private suspend fun buildContext(history: List<MessageEntity>): List<ChatMessage> {
         // The persona is appended to the base prompt rather than replacing it:
         // the rules above it are what keep the agent honest about which model is
         // answering, and a persona must not be able to switch those off.
@@ -185,9 +191,14 @@ class ChatEngine(
             role = Role.SYSTEM,
             // Persona last, so the user's own voice wins over a skill telling
             // the agent how to sound.
+            // Memory before skills, skills before persona. Memory is what is
+            // true, a skill is how to work, and the persona is how to sound: an
+            // instruction that contradicts a fact should lose, and the user's
+            // own voice should still win over both.
             content = listOfNotNull(
                 SYSTEM_PROMPT,
                 toolNote,
+                memory?.promptSection(),
                 skills?.promptSection(),
                 persona().promptSection(),
             )
@@ -239,6 +250,18 @@ class ChatEngine(
             then read the page that looks right. Say what you found and where
             it came from. If a tool fails, say so rather than filling the gap
             with a plausible answer.
+
+            You also have a memory that survives this conversation. Write to it
+            when you learn something that will still be true next week: a
+            preference, a decision, how something is set up, a name for a thing.
+            Do not write down the answer to the question you were just asked, or
+            anything the user is clearly telling you only for now. One
+            self-contained sentence per memory, stated as fact, with no
+            reference to this conversation.
+
+            Search your memory when a question leans on something you were told
+            before and cannot see in front of you. What you already know about
+            the user is given to you above; you do not need to search for that.
         """.trimIndent()
 
         val SYSTEM_PROMPT = REYAAK_SYSTEM_PROMPT

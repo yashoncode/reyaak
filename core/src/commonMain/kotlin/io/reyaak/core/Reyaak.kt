@@ -7,9 +7,13 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import io.reyaak.core.data.ReyaakDatabase
 import io.reyaak.router.catalog.ModelSpec
 import io.reyaak.core.llm.LLMClient
+import io.reyaak.core.memory.MemoryStore
+import io.reyaak.core.memory.TurnScope
 import io.reyaak.core.persona.PersonaStore
 import io.reyaak.core.skills.SkillStore
 import io.reyaak.core.tools.AgentTool
+import io.reyaak.core.tools.MemorySearchTool
+import io.reyaak.core.tools.MemoryWriteTool
 import io.reyaak.core.tools.ToolRegistry
 import io.reyaak.core.tools.WebReadTool
 import io.reyaak.core.tools.WebSearchTool
@@ -39,6 +43,7 @@ class ReyaakCore private constructor(
     val persona: PersonaStore,
     val tools: ToolRegistry,
     val skills: SkillStore,
+    val memory: MemoryStore,
 ) {
 
     /** Read persisted config. Returns any warnings, for the UI to surface. */
@@ -180,13 +185,24 @@ class ReyaakCore private constructor(
             // nothing to discover at runtime. What the user controls is which of
             // them the agent may use, which lives in the registry config.
             val skills = SkillStore(skillPersistence)
-            val tools = ToolRegistry(
-                tools = listOf(WebSearchTool(), WebReadTool()) + extraTools,
-                persistence = toolPersistence,
-            )
             // The bundled driver is set here rather than by each host, so
             // Android and iOS provably run the same SQLite build.
             val db = databaseBuilder.setDriver(BundledSQLiteDriver()).build()
+            val memory = MemoryStore(db.memoryDao())
+            // Which conversation is being served, so a memory the agent writes
+            // can be traced back to what was being discussed at the time. A
+            // holder rather than a parameter because the tool list is built once
+            // and the conversation changes every turn.
+            val turn = TurnScope()
+            val tools = ToolRegistry(
+                tools = listOf(
+                    WebSearchTool(),
+                    WebReadTool(),
+                    MemoryWriteTool(memory) { turn.conversationId },
+                    MemorySearchTool(memory),
+                ) + extraTools,
+                persistence = toolPersistence,
+            )
             return ReyaakCore(
                 configStore = configStore,
                 router = router,
@@ -198,12 +214,15 @@ class ReyaakCore private constructor(
                     persona = { persona.persona.value },
                     tools = tools,
                     skills = skills,
+                    memory = memory,
+                    turn = turn,
                 ),
                 health = health,
                 agent = agent,
                 persona = persona,
                 tools = tools,
                 skills = skills,
+                memory = memory,
             )
         }
     }

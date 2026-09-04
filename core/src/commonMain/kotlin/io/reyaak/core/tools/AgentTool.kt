@@ -6,6 +6,7 @@ import io.reyaak.router.model.ToolDefinition
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -38,6 +39,18 @@ interface AgentTool {
      */
     fun ready(config: ToolConfig): Boolean = true
 
+    /**
+     * Whether running this can change anything outside the agent.
+     *
+     * True by default, and deliberately so: a tool added later, or supplied by a
+     * host this module has never seen, is assumed to have effects until someone
+     * says otherwise. Defaulting to false would make every new tool silently
+     * eligible for unattended use, which is the wrong way round for a mistake to
+     * happen. Reading a page or searching memory is safe to run unattended;
+     * writing memory or touching a mailbox is not.
+     */
+    val effectful: Boolean get() = true
+
     /** @return text for the model. Throwing is fine: the caller reports it. */
     suspend fun run(argumentsJson: String, config: ToolConfig): String
 
@@ -52,8 +65,23 @@ interface AgentTool {
  */
 @Serializable
 data class ToolConfig(
-    /** Tool names the user turned on. Off by default: a tool costs a round trip. */
-    val enabled: Set<String> = emptySet(),
+    /**
+     * Tool names the user turned on.
+     *
+     * Off by default, because a tool costs a round trip. The exception is memory:
+     * an agent whose memory is switched off does not learn anything, which is not
+     * a default anyone would choose deliberately, so [DEFAULT_ENABLED] is unioned
+     * in once per install by [ToolRegistry.load].
+     */
+    val enabled: Set<String> = DEFAULT_ENABLED,
+    /**
+     * Which defaults this record has already been given.
+     *
+     * Without it, a config written before memory existed would keep memory off
+     * forever, and unioning the defaults on every load would make turning
+     * memory off impossible.
+     */
+    @SerialName("config_version") val configVersion: Int = CONFIG_VERSION,
     /** fastCRW key. A credential, so this file is Keystore-encrypted like the router config. */
     val crwApiKey: String = "",
     /** Override for a self-hosted crw, which needs no key at all. */
@@ -109,8 +137,20 @@ class ToolRegistry(
 
     suspend fun load() {
         val stored = persistence.read()?.takeIf { it.isNotBlank() } ?: return
-        _config.value = runCatching { json.decodeFromString<ToolConfig>(stored) }
+        val decoded = runCatching { json.decodeFromString<ToolConfig>(stored) }
             .getOrDefault(ToolConfig())
+        // A config written before a default existed is brought up to date once,
+        // then left alone, so switching one of those tools back off sticks.
+        _config.value = if (decoded.configVersion < CONFIG_VERSION) {
+            val upgraded = decoded.copy(
+                enabled = decoded.enabled + DEFAULT_ENABLED,
+                configVersion = CONFIG_VERSION,
+            )
+            persistence.write(json.encodeToString(upgraded))
+            upgraded
+        } else {
+            decoded
+        }
     }
 
     suspend fun update(transform: (ToolConfig) -> ToolConfig) {
@@ -127,6 +167,19 @@ class ToolRegistry(
     fun definitions(): List<ToolDefinition> {
         val cfg = _config.value
         return tools.filter { usable(it, cfg) }.map { it.definition() }
+    }
+
+    /**
+     * The tools that are safe to offer when nobody is watching.
+     *
+     * Used by the maintenance pass, which runs on a timer rather than on a
+     * request. An unattended turn that could send mail or rewrite memory is a
+     * different risk from one the user is sitting in front of, so the timer only
+     * ever sees the tools that cannot change anything.
+     */
+    fun readOnlyDefinitions(): List<ToolDefinition> {
+        val cfg = _config.value
+        return tools.filter { !it.effectful && usable(it, cfg) }.map { it.definition() }
     }
 
     fun usable(tool: AgentTool, cfg: ToolConfig = _config.value): Boolean =
@@ -154,3 +207,14 @@ class ToolRegistry(
         val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     }
 }
+
+/** Tools that start on. Memory only: everything else costs a round trip. */
+val DEFAULT_ENABLED: Set<String> = setOf("memory_write", "memory_search")
+
+/**
+ * Bumped when [DEFAULT_ENABLED] gains a name that existing installs should get.
+ *
+ * Not a schema version: the record is additive and Room-free. It exists only to
+ * make "apply the new defaults once" distinguishable from "apply them forever".
+ */
+const val CONFIG_VERSION = 1

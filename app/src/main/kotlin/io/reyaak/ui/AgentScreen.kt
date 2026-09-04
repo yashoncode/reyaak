@@ -248,6 +248,10 @@ fun AgentScreen(
 
         item { Spacer(Modifier.height(10.dp)) }
 
+        // Memory before skills: what the agent knows explains its answers more
+        // directly than how it was told to phrase them.
+        item { MemoryCard(core) }
+
         item { SkillsCard(core) }
 
         item {

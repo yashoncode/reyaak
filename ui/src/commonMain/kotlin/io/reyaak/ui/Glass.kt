@@ -118,6 +118,11 @@ object Ph {
     const val STOP = "\uE46C"
     const val PLAY = "\uE3D0"
     const val ARROW_UP = "\uE08E"
+    const val PIN = "\uE3E2"
+    const val PIN_SLASH = "\uE3E4"
+    const val ARCHIVE = "\uE00C"
+    const val BRAIN = "\uE74E"
+    const val PENCIL = "\uE3B4"
 }
 
 /** One Phosphor glyph. [fill] picks the solid cut, as the design does for tabs. */

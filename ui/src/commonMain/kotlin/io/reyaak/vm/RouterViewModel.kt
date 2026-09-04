@@ -10,6 +10,7 @@ import io.reyaak.router.catalog.Provider
 import io.reyaak.router.config.KeyRecord
 import io.reyaak.router.config.RouterSettings
 import io.reyaak.router.health.HealthSnapshot
+import io.reyaak.router.config.movedTo
 import io.reyaak.router.score.RoutingStrategy
 import io.reyaak.router.time.epochMillis
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -255,6 +256,22 @@ class RouterViewModel(private val core: ReyaakCore) : ViewModel() {
         val next = current.toMutableList()
         next.add(to, next.removeAt(from))
         core.configStore.update { it.copy(fallbackOrder = next) }
+    }
+
+    /**
+     * Move one model straight to a rank, 1-based.
+     *
+     * The step buttons are fine for a nudge and useless for the real case: a
+     * provider that lists 300 models puts the one you want at rank 180, and
+     * nobody taps up 179 times. Typing the rank is the same edit in one action.
+     *
+     * The position is clamped rather than rejected, so 0 or 999 land at the ends
+     * instead of doing nothing and leaving the user guessing why.
+     */
+    fun moveToPosition(modelKey: String, position: Int) = viewModelScope.launch {
+        val current = _state.value.manualOrder.map { it.modelKey }
+        val next = current.movedTo(modelKey, position)
+        if (next != current) core.configStore.update { it.copy(fallbackOrder = next) }
     }
 
     /** Drop the manual chain, so scoring decides the order again. */

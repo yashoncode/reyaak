@@ -114,3 +114,19 @@ data class RouterSettings(
         }
     }
 }
+
+/**
+ * The same list with one entry moved to a 1-based rank.
+ *
+ * Lives beside [RouterSettings.fallbackOrder] rather than in the screen that
+ * calls it because it is an edit to that field, and because the clamping is the
+ * whole point: a rank typed out of range lands at the nearest end instead of
+ * being rejected, so 0 and 1 both mean first and nothing is silently ignored.
+ */
+fun List<String>.movedTo(key: String, position: Int): List<String> {
+    val from = indexOf(key)
+    if (from < 0) return this
+    val to = (position - 1).coerceIn(0, lastIndex)
+    if (to == from) return this
+    return toMutableList().apply { add(to, removeAt(from)) }
+}

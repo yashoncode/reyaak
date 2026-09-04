@@ -25,6 +25,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -38,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -234,6 +244,7 @@ fun RouterScreen(
         OrderEditorDialog(
             order = state.manualOrder,
             onMove = { key, delta -> vm.moveInOrder(key, delta) },
+            onSetPosition = { key, position -> vm.moveToPosition(key, position) },
             onDismiss = { showOrderEditor = false },
         )
     }
@@ -721,22 +732,31 @@ private fun UsageCard(rows: List<io.reyaak.core.data.UsageRow>) {
 }
 
 /**
- * Reorder the chain, one step at a time.
+ * Reorder the chain: type a rank, or step one row at a time.
  *
- * Up/down buttons rather than drag-and-drop: the animation is what makes a move
- * legible, and `animateItem` on a keyed lazy list gives that for free, whereas
- * long-press drag on a phone-sized list of forty rows means a lot of scrolling
- * while holding a finger down. The list re-sorts from persisted state, so each
- * tap animates the row into its new place.
+ * The rank is the primary control, because the real case is a long list. With
+ * 300 models the one you want is at rank 180 and stepping there is 179 taps, so
+ * the number is editable and moving is one action. The step buttons stay for the
+ * nudge, which is the only thing they were ever good at.
+ *
+ * Up/down rather than drag-and-drop for that nudge: the animation is what makes
+ * a move legible, and `animateItem` on a keyed lazy list gives that for free,
+ * whereas long-press drag on a phone-sized list means a lot of scrolling while
+ * holding a finger down. The list re-sorts from persisted state, so every edit
+ * animates the row into its new place.
  */
 @Composable
 private fun OrderEditorDialog(
     order: List<ChainRow>,
     onMove: (String, Int) -> Unit,
+    onSetPosition: (String, Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val t = LocalTokens.current
     val haptics = LocalHapticFeedback.current
+    // Which row's rank is being typed into. One at a time, so the keyboard and
+    // the focus have exactly one owner.
+    var editing by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -744,34 +764,50 @@ private fun OrderEditorDialog(
         shape = RoundedCornerShape(24.dp),
         title = { Text("Chain order", color = t.ink, style = rk(600, 18.0, 1.25)) },
         text = {
-            LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                itemsIndexed(order, key = { _, row -> row.modelKey }) { index, row ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .animateItem()
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        MonoText("${index + 1}".padStart(2), size = 11.0, tint = t.faint)
-                        Spacer(Modifier.width(9.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                row.displayName,
-                                color = t.ink,
-                                style = rk(400, 13.5, 1.2),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+            Column {
+                FootNote("Tap a number to send that model straight to that rank.")
+                Spacer(Modifier.height(10.dp))
+                LazyColumn(Modifier.heightIn(max = 400.dp)) {
+                    itemsIndexed(order, key = { _, row -> row.modelKey }) { index, row ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .animateItem()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RankField(
+                                rank = index + 1,
+                                total = order.size,
+                                editing = editing == row.modelKey,
+                                onStartEdit = { editing = row.modelKey },
+                                onCommit = { position ->
+                                    editing = null
+                                    if (position != null && position != index + 1) {
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        onSetPosition(row.modelKey, position)
+                                    }
+                                },
                             )
-                            MonoText(row.platform, size = 10.5, tint = t.faint, maxLines = 1)
-                        }
-                        MoveButton(Ph.ARROW_UP, index > 0) {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onMove(row.modelKey, -1)
-                        }
-                        MoveButton(Ph.ARROW_DOWN, index < order.lastIndex) {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onMove(row.modelKey, 1)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    row.displayName,
+                                    color = t.ink,
+                                    style = rk(400, 13.5, 1.2),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                MonoText(row.platform, size = 10.5, tint = t.faint, maxLines = 1)
+                            }
+                            MoveButton(Ph.ARROW_UP, index > 0) {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onMove(row.modelKey, -1)
+                            }
+                            MoveButton(Ph.ARROW_DOWN, index < order.lastIndex) {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onMove(row.modelKey, 1)
+                            }
                         }
                     }
                 }
@@ -783,6 +819,71 @@ private fun OrderEditorDialog(
             }
         },
     )
+}
+
+/**
+ * The rank, as a control rather than a label.
+ *
+ * [onCommit] receives null when the edit was abandoned, so a blank or nonsense
+ * entry leaves the order alone instead of moving the row to rank 1.
+ */
+@Composable
+private fun RankField(
+    rank: Int,
+    total: Int,
+    editing: Boolean,
+    onStartEdit: () -> Unit,
+    onCommit: (Int?) -> Unit,
+) {
+    val t = LocalTokens.current
+    val shape = RoundedCornerShape(8.dp)
+    // Re-seeded whenever the row's own rank changes, so a move elsewhere in the
+    // list does not leave a stale number sitting in the box.
+    var draft by remember(rank, editing) { mutableStateOf(if (editing) "" else rank.toString()) }
+    val focus = remember { FocusRequester() }
+
+    LaunchedEffect(editing) { if (editing) focus.requestFocus() }
+
+    Box(
+        Modifier
+            .width(38.dp)
+            .height(26.dp)
+            .clip(shape)
+            .background(if (editing) t.accSoft else t.g1)
+            .border(1.dp, if (editing) t.accLine else t.line, shape)
+            .then(if (editing) Modifier else Modifier.clickable(onClick = onStartEdit)),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (editing) {
+            BasicTextField(
+                value = draft,
+                onValueChange = { next -> draft = next.filter { it.isDigit() }.take(3) },
+                textStyle = rk(500, 12.0, 1.0, mono = true)
+                    .copy(color = t.accLt, textAlign = TextAlign.Center),
+                cursorBrush = Brush.verticalGradient(listOf(t.accLt, t.accLt)),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = KeyboardActions(
+                    onDone = { onCommit(draft.toIntOrNull()) },
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focus)
+                    // Tapping elsewhere is an abandon, not a move.
+                    .onFocusChanged { if (!it.isFocused) onCommit(null) },
+            )
+        } else {
+            MonoText(
+                rank.toString().padStart(if (total >= 100) 3 else 2),
+                size = 11.0,
+                tint = t.mut,
+                weight = 500,
+            )
+        }
+    }
 }
 
 @Composable

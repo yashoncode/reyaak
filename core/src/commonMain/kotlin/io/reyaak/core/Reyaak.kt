@@ -14,6 +14,7 @@ import io.reyaak.core.skills.SkillStore
 import io.reyaak.core.tools.AgentTool
 import io.reyaak.core.tools.MemorySearchTool
 import io.reyaak.core.tools.MemoryWriteTool
+import io.reyaak.core.tools.SkillWriteTool
 import io.reyaak.core.tools.ToolRegistry
 import io.reyaak.core.tools.WebReadTool
 import io.reyaak.core.tools.WebSearchTool
@@ -200,6 +201,7 @@ class ReyaakCore private constructor(
                     WebReadTool(),
                     MemoryWriteTool(memory) { turn.conversationId },
                     MemorySearchTool(memory),
+                    SkillWriteTool(skills),
                 ) + extraTools,
                 persistence = toolPersistence,
             )

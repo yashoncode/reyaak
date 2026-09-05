@@ -787,6 +787,34 @@ fun ConfirmSheet(confirmation: Confirmation, onDismiss: () -> Unit) {
 
 private val Err40 = Color(0xFFE9899B).copy(alpha = 0.4f)
 
+/**
+ * A quiet square icon button for the trailing edge of a list row.
+ *
+ * Sized to the 28dp touch square the memory and skill rows share, and faint by
+ * default: these sit next to content, and a row of bright glyphs would read as
+ * the point of the row rather than what it says.
+ */
+@Composable
+fun RowIcon(glyph: String, onClick: () -> Unit, active: Boolean = false) {
+    val t = LocalTokens.current
+    Box(
+        Modifier
+            .size(28.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .then(
+                if (active) {
+                    Modifier
+                        .background(t.accSoft)
+                        .border(1.dp, t.accLine, RoundedCornerShape(9.dp))
+                } else {
+                    Modifier
+                }
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { PhIcon(glyph, 13.0, if (active) t.accLt else t.faint, fill = active) }
+}
+
 /** The rounded launcher-mark tile, cropped the way the design crops it. */
 @Composable
 fun IconTile(size: Dp, modifier: Modifier = Modifier) {

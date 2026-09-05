@@ -10,10 +10,13 @@ import org.junit.Test
 
 class SkillStoreTest {
 
-    private fun store(stored: String? = null) = SkillStore(ConfigPersistence.InMemory(stored))
+    private var clock = 1_000_000L
+
+    private fun store(stored: String? = null) =
+        SkillStore(ConfigPersistence.InMemory(stored)) { clock }
 
     @Test
-    fun `every shipped skill starts off, so nothing changes behaviour silently`() {
+    fun `every shipped skill starts off, so nothing changes behaviour silently`() = runTest {
         assertTrue(SkillStore.BUILTINS.none { it.enabled })
         assertNull(store().promptSection())
     }
@@ -95,5 +98,121 @@ class SkillStoreTest {
         val store = store("{ not json")
         store.load()
         assertEquals(SkillStore.BUILTINS.size, store.skills.value.size)
+    }
+
+    // ── Curation invariants, the same four that hold for memory ─────────────
+
+    private suspend fun SkillStore.learn(id: String, text: String = "do the thing") =
+        save(
+            Skill(id = id, name = id, instructions = text, enabled = true, agentCreated = true),
+            byUser = false,
+        )
+
+    @Test
+    fun `curation never touches a skill the user wrote`() = runTest {
+        val store = store()
+        store.save(Skill(id = "mine", name = "Mine", instructions = "my way", enabled = true))
+        clock += FORTY_DAYS
+
+        store.archiveStale()
+
+        assertFalse(store.skills.value.first { it.id == "mine" }.archived)
+    }
+
+    @Test
+    fun `curation never touches a pinned skill`() = runTest {
+        val store = store()
+        store.learn("pinned-one")
+        store.setPinned("pinned-one", true)
+        clock += FORTY_DAYS
+
+        store.archiveStale()
+
+        assertFalse(store.skills.value.first { it.id == "pinned-one" }.archived)
+    }
+
+    @Test
+    fun `curation archives rather than deletes`() = runTest {
+        val store = store()
+        store.learn("stale-one")
+        val before = store.skills.value.size
+        clock += FORTY_DAYS
+
+        val archived = store.archiveStale()
+
+        assertEquals(1, archived.size)
+        assertEquals("nothing was removed", before, store.skills.value.size)
+        assertTrue(store.skills.value.first { it.id == "stale-one" }.archived)
+    }
+
+    @Test
+    fun `curation spares a skill that has been used`() = runTest {
+        val store = store()
+        store.learn("used-one")
+        store.promptSection()
+        clock += FORTY_DAYS
+
+        store.archiveStale()
+
+        val used = store.skills.value.first { it.id == "used-one" }
+        assertEquals(1, used.usageCount)
+        assertFalse(used.archived)
+    }
+
+    @Test
+    fun `curation spares a recent skill`() = runTest {
+        val store = store()
+        store.learn("fresh-one")
+        clock += 60_000
+        assertTrue(store.archiveStale().isEmpty())
+    }
+
+    @Test
+    fun `an archived skill does not reach the prompt`() = runTest {
+        val store = store()
+        store.learn("hidden-one", "never say this")
+        store.setArchived("hidden-one", true)
+        assertNull(store.promptSection())
+    }
+
+    @Test
+    fun `archiving is reversible`() = runTest {
+        val store = store()
+        store.learn("back-again")
+        store.setArchived("back-again", true)
+        store.setArchived("back-again", false)
+        assertFalse(store.skills.value.first { it.id == "back-again" }.archived)
+    }
+
+    @Test
+    fun `rewriting a skill by hand takes it out of the curator's reach`() = runTest {
+        val store = store()
+        store.learn("learned-thing", "first attempt")
+        val agents = store.skills.value.first { it.id == "learned-thing" }
+        store.save(agents.copy(instructions = "how it actually works"))
+        clock += FORTY_DAYS
+
+        store.archiveStale()
+
+        val corrected = store.skills.value.first { it.id == "learned-thing" }
+        assertFalse(corrected.agentCreated)
+        assertFalse(corrected.archived)
+        assertEquals(2, corrected.version)
+    }
+
+    @Test
+    fun `the agent revising its own skill keeps it and bumps the version`() = runTest {
+        val store = store()
+        store.learn("learned-thing", "first attempt")
+        val agents = store.skills.value.first { it.id == "learned-thing" }
+        store.save(agents.copy(instructions = "second attempt"), byUser = false)
+
+        val revised = store.skills.value.first { it.id == "learned-thing" }
+        assertTrue(revised.agentCreated)
+        assertEquals(2, revised.version)
+    }
+
+    private companion object {
+        const val FORTY_DAYS = 40L * 24 * 60 * 60 * 1000
     }
 }

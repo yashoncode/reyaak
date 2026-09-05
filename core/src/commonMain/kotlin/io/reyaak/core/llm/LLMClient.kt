@@ -186,9 +186,12 @@ class LLMClient(private val router: Router) {
         /**
          * How many times the model may call tools before it has to answer.
          *
-         * Four is enough for search-then-read-then-read, and low enough that a
-         * model stuck in a loop costs a few seconds rather than a quota.
+         * Six rather than four since the agent also writes down what it learned:
+         * search, read, read, then remember and record a procedure is a normal
+         * shape for one turn now, and cutting the tools off before the writing
+         * rounds would drop exactly the part that makes the next turn cheaper.
+         * Still low enough that a model stuck in a loop costs seconds, not a quota.
          */
-        const val MAX_TOOL_ROUNDS = 4
+        const val MAX_TOOL_ROUNDS = 6
     }
 }

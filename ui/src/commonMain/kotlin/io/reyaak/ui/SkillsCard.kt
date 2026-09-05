@@ -22,6 +22,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -43,6 +44,10 @@ fun SkillsCard(core: ReyaakCore) {
     val scope = rememberCoroutineScope()
     val skills by core.skills.skills.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf<Skill?>(null) }
+    var showArchived by remember { mutableStateOf(false) }
+
+    val archived = skills.filter { it.archived }
+    val shown = if (showArchived) skills else skills.filterNot { it.archived }
 
     Glass(radius = 20.dp, modifier = Modifier.animateContentSize()) {
         Row(verticalAlignment = Alignment.Top) {
@@ -50,7 +55,7 @@ fun SkillsCard(core: ReyaakCore) {
                 CardTitle("Skills")
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    skills.count { it.enabled }.let {
+                    skills.count { it.enabled && !it.archived }.let {
                         if (it == 0) "None active. The agent answers as itself."
                         else "$it active, applied from your next message."
                     },
@@ -59,6 +64,13 @@ fun SkillsCard(core: ReyaakCore) {
                 )
             }
             Spacer(Modifier.width(10.dp))
+            if (archived.isNotEmpty()) {
+                RkChipButton(
+                    label = if (showArchived) "Hide" else "Archived ${archived.size}",
+                    onClick = { showArchived = !showArchived },
+                )
+                Spacer(Modifier.width(8.dp))
+            }
             RkChipButton(
                 label = "New",
                 accent = true,
@@ -78,9 +90,13 @@ fun SkillsCard(core: ReyaakCore) {
             )
         }
 
-        skills.forEach { skill ->
+        shown.forEach { skill ->
             Row(
-                Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                Modifier
+                    .fillMaxWidth()
+                    // Archived stays readable but stops competing with live ones.
+                    .alpha(if (skill.archived) 0.5f else 1f)
+                    .padding(vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
@@ -93,17 +109,42 @@ fun SkillsCard(core: ReyaakCore) {
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    // Only for what the agent wrote: for a shipped or hand-written
+                    // skill the version and the use count explain nothing, because
+                    // neither one is ever curated on them.
+                    if (skill.agentCreated) {
+                        Spacer(Modifier.height(5.dp))
+                        MonoText(
+                            "written by the agent · v${skill.version} · " +
+                                "used ${skill.usageCount}x" +
+                                if (skill.archived) " · archived" else "",
+                            size = 10.5,
+                            tint = t.faint,
+                        )
+                    }
                 }
-                Spacer(Modifier.width(11.dp))
-                RkTextAction(
-                    "Edit",
-                    onClick = { editing = skill },
-                    tint = t.mut,
-                    fontSize = 11.5,
-                )
-                Spacer(Modifier.width(11.dp))
+                Spacer(Modifier.width(6.dp))
+                // Curation can only reach agent-written skills, so only those
+                // get the controls that exist to stop it.
+                if (skill.agentCreated) {
+                    RowIcon(
+                        Ph.PIN,
+                        onClick = {
+                            scope.launch { core.skills.setPinned(skill.id, !skill.pinned) }
+                        },
+                        active = skill.pinned,
+                    )
+                    RowIcon(
+                        if (skill.archived) Ph.COUNTER_CLOCKWISE else Ph.ARCHIVE,
+                        onClick = {
+                            scope.launch { core.skills.setArchived(skill.id, !skill.archived) }
+                        },
+                    )
+                }
+                RowIcon(Ph.PENCIL, onClick = { editing = skill })
+                Spacer(Modifier.width(5.dp))
                 RkSwitch(
-                    checked = skill.enabled,
+                    checked = skill.enabled && !skill.archived,
                     onChange = { on -> scope.launch { core.skills.setEnabled(skill.id, on) } },
                 )
             }
@@ -113,7 +154,9 @@ fun SkillsCard(core: ReyaakCore) {
         Spacer(Modifier.height(13.dp))
         FootNote(
             "Active skills are added to the prompt after the base rules and " +
-                "before your personalisation, so your own voice still wins."
+                "before your personalisation, so your own voice still wins. The agent " +
+                "writes skills of its own after a job worth repeating; editing one " +
+                "makes it yours, and it stops being curated."
         )
     }
 

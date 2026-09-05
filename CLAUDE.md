@@ -59,8 +59,12 @@ The split is load-bearing rather than tidy:
 - **Memory is facts.** `MemoryStore`, Room-backed, retrieved when relevant. The
   user model (`MemoryKind.PROFILE`) goes into every prompt; facts
   (`MemoryKind.FACT`) are fetched by the `memory_search` tool.
-- **Skills are procedures.** `SkillStore`, plain text the user switches on,
-  which then applies to every turn.
+- **Skills are procedures.** `SkillStore`, plain text that applies to every turn
+  while it is on. The user writes them and so does the agent: `skill_write`
+  records how a finished job was actually done, and revises that skill rather
+  than adding a second one about the same task. Agent-written skills start
+  enabled, because a procedure that has to be switched on by hand is one the
+  agent will never get to use.
 
 Merging them would mean either loading every fact into every prompt or letting a
 procedure be forgotten for being unused.
@@ -68,13 +72,18 @@ procedure be forgotten for being unused.
 ### The curation invariants
 
 An agent that edits its own memory can lose the user's data, so these are
-requirements, locked down by `MemoryStoreTest`. Do not relax one without
-deleting the test that asserts it and saying why:
+requirements, locked down by `MemoryStoreTest` and `SkillStoreTest`. They are
+the same four on both sides, and the two stores are deliberately parallel:
+`agentCreated`, `pinned`, `archived`, a use count, and an `archiveStale()` that
+is a pure predicate. Do not relax one without deleting the test that asserts it
+and saying why:
 
 1. **Never touch what the user wrote.** `agentCreated = false` is out of reach
-   of the curator. Editing a memory transfers ownership to the user, which is
-   why `edit()` uses `updateContentAsUser` and `remember()`'s deduplicating
-   update does not.
+   of the curator. Editing transfers ownership to the user, which is why
+   `MemoryStore.edit()` uses `updateContentAsUser` and `remember()`'s
+   deduplicating update does not, and why `SkillStore.save()` takes `byUser`.
+   `SkillWriteTool` enforces the same thing at the door: it refuses to rewrite
+   a builtin or anything the user has touched, rather than trusting the prompt.
 2. **Never auto-delete.** Curation archives, and archiving is reversible.
    `forget()` is the only hard delete and is reachable only from an explicit
    user action.
@@ -86,7 +95,22 @@ deleting the test that asserts it and saying why:
 
 Maintenance is triggered by **inactivity**, in `AgentService.runLoop`, not by a
 scheduler. No WorkManager: it would add a second execution path and could fire
-mid-sentence, and a quiet stretch is the better signal anyway.
+mid-sentence, and a quiet stretch is the better signal anyway. It curates both
+stores in the same pass.
+
+"Used" means something different on each side, and that is the point. A memory
+counts a use when `recall` returns it; a skill counts one when it goes into a
+prompt, because there is no separate lookup that could count instead.
+
+### Planning
+
+Plan-then-act is a **prompt contract**, in `ChatEngine.TOOL_PROMPT`: state the
+plan before the first call when a task needs more than two, and revise it out
+loud when a tool contradicts it. There is no planner object and no separate
+planning round trip. A dedicated planning turn would double the latency of every
+tool-using answer on a phone to buy structure nothing currently reads. Add one
+when plans measurably drift, not before. `MAX_TOOL_ROUNDS` is 6 rather than 4 so
+the writing rounds at the end of a turn are not what gets cut off.
 
 ### Tool side effects
 

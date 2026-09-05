@@ -42,6 +42,9 @@ class AgentService : Service() {
     /** Curated on idle, so the store does not grow without bound. */
     private val memory by lazy { (application as ReyaakApp).core.memory }
 
+    /** Curated the same way: a procedure the agent wrote and never used again. */
+    private val skills by lazy { (application as ReyaakApp).core.skills }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var loop: Job? = null
 
@@ -137,8 +140,10 @@ class AgentService : Service() {
      * thing the loop exists to keep running.
      */
     private suspend fun curate() {
-        val archived = runCatching { memory.archiveStale() }.getOrNull().orEmpty()
-        if (archived.isNotEmpty()) agent.heartbeat("Archived ${archived.size} stale memories")
+        val memories = runCatching { memory.archiveStale() }.getOrNull().orEmpty()
+        if (memories.isNotEmpty()) agent.heartbeat("Archived ${memories.size} stale memories")
+        val procedures = runCatching { skills.archiveStale() }.getOrNull().orEmpty()
+        if (procedures.isNotEmpty()) agent.heartbeat("Archived ${procedures.size} unused skills")
     }
 
     private fun stopAgent() {

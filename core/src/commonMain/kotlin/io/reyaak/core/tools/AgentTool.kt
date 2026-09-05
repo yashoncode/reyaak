@@ -208,8 +208,14 @@ class ToolRegistry(
     }
 }
 
-/** Tools that start on. Memory only: everything else costs a round trip. */
-val DEFAULT_ENABLED: Set<String> = setOf("memory_write", "memory_search")
+/**
+ * Tools that start on: the ones the agent needs to learn anything.
+ *
+ * Everything else costs a round trip and stays off. These three do not: two are
+ * local reads and writes, and the third only fires after the agent has already
+ * finished something worth writing down.
+ */
+val DEFAULT_ENABLED: Set<String> = setOf("memory_write", "memory_search", "skill_write")
 
 /**
  * Bumped when [DEFAULT_ENABLED] gains a name that existing installs should get.
@@ -217,4 +223,4 @@ val DEFAULT_ENABLED: Set<String> = setOf("memory_write", "memory_search")
  * Not a schema version: the record is additive and Room-free. It exists only to
  * make "apply the new defaults once" distinguishable from "apply them forever".
  */
-const val CONFIG_VERSION = 1
+const val CONFIG_VERSION = 2

@@ -178,36 +178,12 @@ private fun MemoryRow(
                 }
             }
             Spacer(Modifier.width(8.dp))
-            if (entry.pinned) {
-                Box(
-                    Modifier
-                        .size(28.dp)
-                        .clip(RoundedCornerShape(9.dp))
-                        .background(t.accSoft)
-                        .border(1.dp, t.accLine, RoundedCornerShape(9.dp))
-                        .clickable(onClick = onTogglePin),
-                    contentAlignment = Alignment.Center,
-                ) { PhIcon(Ph.PIN, 13.0, t.accLt, fill = true) }
-            } else {
-                RowIcon(Ph.PIN, onTogglePin)
-            }
+            RowIcon(Ph.PIN, onTogglePin, active = entry.pinned)
             RowIcon(Ph.PENCIL, onEdit)
             RowIcon(if (entry.archived) Ph.COUNTER_CLOCKWISE else Ph.ARCHIVE, onToggleArchive)
             RowIcon(Ph.TRASH, onDelete)
         }
     }
-}
-
-@Composable
-private fun RowIcon(glyph: String, onClick: () -> Unit) {
-    val t = LocalTokens.current
-    Box(
-        Modifier
-            .size(28.dp)
-            .clip(RoundedCornerShape(9.dp))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) { PhIcon(glyph, 13.0, t.faint) }
 }
 
 @Composable

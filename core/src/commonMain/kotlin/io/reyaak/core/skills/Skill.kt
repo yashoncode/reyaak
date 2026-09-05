@@ -1,6 +1,7 @@
 package io.reyaak.core.skills
 
 import io.reyaak.router.config.ConfigPersistence
+import io.reyaak.router.time.epochMillis
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +26,22 @@ data class Skill(
     val enabled: Boolean = false,
     /** Shipped with the app. Editable, but never deletable: it can be reset. */
     val builtin: Boolean = false,
+    /**
+     * Bumped on every rewrite, so a procedure that keeps being revised is
+     * visible as such. Not a history: keeping every past body of every skill on
+     * a phone would cost more than being able to read one.
+     */
+    val version: Int = 1,
+    /** Pinned bypasses every automatic transition, exactly as in memory. */
+    val pinned: Boolean = false,
+    /** Curated away rather than deleted, and reversible. */
+    val archived: Boolean = false,
+    /** How many prompts this skill has been part of. What earns it its tokens. */
+    val usageCount: Int = 0,
+    /** Written by the agent. Only these are ever curated automatically. */
+    val agentCreated: Boolean = false,
+    /** Last write, for staleness. Zero on the shipped set, which never goes stale. */
+    val updatedAt: Long = 0,
 )
 
 @Serializable
@@ -38,7 +55,10 @@ data class SkillSet(val skills: List<Skill> = emptyList())
  * would mean deciding what happens when the builtin text changes in an app
  * update. Storing the file the user last saw has no such question.
  */
-class SkillStore(private val persistence: ConfigPersistence) {
+class SkillStore(
+    private val persistence: ConfigPersistence,
+    private val now: () -> Long = ::epochMillis,
+) {
 
     private val _skills = MutableStateFlow(BUILTINS)
     val skills: StateFlow<List<Skill>> = _skills.asStateFlow()
@@ -60,14 +80,62 @@ class SkillStore(private val persistence: ConfigPersistence) {
     suspend fun setEnabled(id: String, enabled: Boolean) =
         write(_skills.value.map { if (it.id == id) it.copy(enabled = enabled) else it })
 
-    /** Add or replace. A blank name or blank instructions is not a skill. */
-    suspend fun save(skill: Skill): Boolean {
+    /**
+     * Add or replace. A blank name or blank instructions is not a skill.
+     *
+     * [byUser] is what decides who owns the result. Rewriting a procedure is a
+     * stronger claim on it than pinning it, so a user edit takes the skill out
+     * of the curator's reach for good, while the agent revising its own does
+     * not hand it back. Same rule as `MemoryStore.edit`.
+     */
+    suspend fun save(skill: Skill, byUser: Boolean = true): Boolean {
         if (skill.name.isBlank() || skill.instructions.isBlank()) return false
         val existing = _skills.value.indexOfFirst { it.id == skill.id }
+        val previous = _skills.value.getOrNull(existing)
+        val rewritten = previous != null && previous.instructions != skill.instructions
+        val saved = skill.copy(
+            version = if (rewritten) previous.version + 1 else skill.version,
+            agentCreated = if (byUser) false else skill.agentCreated,
+            updatedAt = now(),
+        )
         val next = _skills.value.toMutableList()
-        if (existing >= 0) next[existing] = skill else next += skill
+        if (existing >= 0) next[existing] = saved else next += saved
         write(next)
         return true
+    }
+
+    suspend fun setPinned(id: String, pinned: Boolean) =
+        write(_skills.value.map { if (it.id == id) it.copy(pinned = pinned) else it })
+
+    suspend fun setArchived(id: String, archived: Boolean) =
+        write(_skills.value.map { if (it.id == id) it.copy(archived = archived) else it })
+
+    /**
+     * The cheap deterministic curation pass, and the only automatic one.
+     *
+     * Same four invariants as memory: agent-written only, archive rather than
+     * delete, pinned is untouchable, and nothing here asks a model anything.
+     * A skill that was never part of a prompt in a month is one the agent wrote
+     * for a job that did not come back.
+     */
+    suspend fun archiveStale(
+        olderThanMs: Long = STALE_AFTER_MS,
+        maxUses: Int = STALE_MAX_USES,
+        limit: Int = ARCHIVE_PER_RUN,
+    ): List<Skill> {
+        val before = now() - olderThanMs
+        val stale = _skills.value
+            .filter {
+                it.agentCreated && !it.pinned && !it.archived &&
+                    it.usageCount <= maxUses && it.updatedAt in 1 until before
+            }
+            .sortedBy { it.updatedAt }
+            .take(limit)
+        if (stale.isEmpty()) return emptyList()
+
+        val ids = stale.map { it.id }.toSet()
+        write(_skills.value.map { if (it.id in ids) it.copy(archived = true) else it })
+        return stale
     }
 
     /** Custom skills only. A builtin is reset instead, so the list cannot empty out. */
@@ -90,8 +158,9 @@ class SkillStore(private val persistence: ConfigPersistence) {
      * until the cap binds, so what gets dropped is predictable rather than
      * whichever one happened to be long.
      */
-    fun promptSection(): String? {
-        val active = _skills.value.filter { it.enabled && it.instructions.isNotBlank() }
+    suspend fun promptSection(): String? {
+        val active = _skills.value
+            .filter { it.enabled && !it.archived && it.instructions.isNotBlank() }
         if (active.isEmpty()) return null
 
         val kept = mutableListOf<Skill>()
@@ -102,6 +171,12 @@ class SkillStore(private val persistence: ConfigPersistence) {
             kept += skill
             budget -= cost
         }
+
+        // Being part of a prompt is what "used" means for a procedure: unlike a
+        // memory there is no separate lookup that could count instead, and a
+        // skill nobody ever loads is exactly what the curator is looking for.
+        val keptIds = kept.map { it.id }.toSet()
+        write(_skills.value.map { if (it.id in keptIds) it.copy(usageCount = it.usageCount + 1) else it })
 
         return buildString {
             appendLine("Active skills. Follow these for this conversation:")
@@ -116,6 +191,11 @@ class SkillStore(private val persistence: ConfigPersistence) {
     companion object {
         /** Total characters of skill text allowed into one prompt. */
         const val MAX_CHARS = 2_000
+
+        /** A procedure unused for a month was written for a job that never came back. */
+        const val STALE_AFTER_MS = 30L * 24 * 60 * 60 * 1000
+        const val STALE_MAX_USES = 0
+        const val ARCHIVE_PER_RUN = 5
 
         /**
          * Shipped skills.

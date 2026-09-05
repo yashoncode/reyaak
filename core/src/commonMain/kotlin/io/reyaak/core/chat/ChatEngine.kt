@@ -251,6 +251,17 @@ class ChatEngine(
             it came from. If a tool fails, say so rather than filling the gap
             with a plausible answer.
 
+            When a task needs more than two tool calls, say the plan in one or
+            two lines before the first call, then work it. Revise the plan out
+            loud if what a tool returns contradicts it. Do not plan a task you
+            can simply answer, and never repeat the plan back at the end.
+
+            When you finish something involved and would do it the same way
+            again, write it down with the skill tool: the steps in order, and
+            the thing that was awkward. Revise the skill you wrote rather than
+            adding a second one about the same task. A skill is how to work; do
+            not put facts in it.
+
             You also have a memory that survives this conversation. Write to it
             when you learn something that will still be true next week: a
             preference, a decision, how something is set up, a name for a thing.
